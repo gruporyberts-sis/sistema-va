@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { createClient } from '@/lib/supabase/client'
+import { supabase } from '@/lib/supabase/client'
 
 type Tecnico = {
   id: string
@@ -13,8 +13,6 @@ type Tecnico = {
 }
 
 export default function TecnicosPage() {
-  const supabase = createClient()
-
   const [tecnicos, setTecnicos] = useState<Tecnico[]>([])
   const [loading, setLoading] = useState(false)
   const [guardando, setGuardando] = useState(false)
@@ -28,7 +26,6 @@ export default function TecnicosPage() {
 
   useEffect(() => {
     cargarTecnicos()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   async function cargarTecnicos() {
