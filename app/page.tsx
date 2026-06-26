@@ -1,30 +1,119 @@
 import Link from 'next/link'
 
+const modulos = [
+  {
+    titulo: 'Técnicos',
+    descripcion: 'Registro y mantenimiento de técnicos.',
+    href: '/tecnicos',
+    icono: '👷',
+  },
+  {
+    titulo: 'Clientes / Destinos',
+    descripcion: 'Clientes y lugares donde se realizan servicios.',
+    href: '/clientes',
+    icono: '📍',
+  },
+  {
+    titulo: 'Servicios / Rutas',
+    descripcion: 'Asignación de servicios a técnicos.',
+    href: '/servicios',
+    icono: '🛠️',
+  },
+]
+
 export default function HomePage() {
   return (
-    <main style={{ padding: 40, minHeight: '100vh', background: '#f1f5f9' }}>
-      <h1 style={{ fontSize: 36, fontWeight: 'bold', color: '#0f172a' }}>
-        Sistema VA - GrupoRybert
-      </h1>
+    <main className="min-h-screen bg-slate-100 p-4 md:p-8">
+      <div className="mx-auto max-w-6xl space-y-8">
+        <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm md:p-8">
+          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+            <div>
+              <p className="text-sm font-semibold uppercase tracking-wide text-blue-600">
+                Sistema de control operativo
+              </p>
 
-      <p style={{ marginTop: 12, fontSize: 18, color: '#334155' }}>
-        Página principal funcionando correctamente.
-      </p>
+              <h1 className="mt-2 text-3xl font-bold text-slate-900 md:text-4xl">
+                Grupo Rybert Ruta
+              </h1>
 
-      <div style={{ marginTop: 24 }}>
-        <Link
-          href="/personas"
-          style={{
-            background: '#2563eb',
-            color: 'white',
-            padding: '12px 20px',
-            borderRadius: 10,
-            textDecoration: 'none',
-            fontWeight: 'bold',
-          }}
-        >
-          Ir a Personas
-        </Link>
+              <p className="mt-2 max-w-2xl text-sm text-slate-500 md:text-base">
+                Control básico de técnicos, clientes, servicios y rutas asignadas.
+              </p>
+            </div>
+
+            <div className="rounded-2xl bg-blue-50 px-5 py-4 text-blue-700">
+              <div className="text-sm font-medium">Estado del sistema</div>
+              <div className="mt-1 text-2xl font-bold">Activo</div>
+            </div>
+          </div>
+        </section>
+
+        <section>
+          <h2 className="mb-4 text-xl font-bold text-slate-900">
+            Menú principal
+          </h2>
+
+          <div className="grid gap-4 md:grid-cols-3">
+            {modulos.map((modulo) => (
+              <Link
+                key={modulo.href}
+                href={modulo.href}
+                className="group rounded-3xl border border-slate-200 bg-white p-6 shadow-sm transition hover:-translate-y-1 hover:shadow-md"
+              >
+                <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-100 text-3xl transition group-hover:bg-blue-50">
+                  {modulo.icono}
+                </div>
+
+                <h3 className="text-lg font-bold text-slate-900">
+                  {modulo.titulo}
+                </h3>
+
+                <p className="mt-2 text-sm text-slate-500">
+                  {modulo.descripcion}
+                </p>
+
+                <div className="mt-5 text-sm font-semibold text-blue-600">
+                  Entrar →
+                </div>
+              </Link>
+            ))}
+          </div>
+        </section>
+
+        <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h2 className="text-lg font-bold text-slate-900">
+            Flujo actual del sistema
+          </h2>
+
+          <div className="mt-4 grid gap-3 md:grid-cols-3">
+            <div className="rounded-2xl bg-slate-50 p-4">
+              <div className="text-sm font-bold text-slate-800">
+                1. Registrar técnicos
+              </div>
+              <p className="mt-1 text-sm text-slate-500">
+                Crear el personal operativo disponible.
+              </p>
+            </div>
+
+            <div className="rounded-2xl bg-slate-50 p-4">
+              <div className="text-sm font-bold text-slate-800">
+                2. Registrar clientes
+              </div>
+              <p className="mt-1 text-sm text-slate-500">
+                Crear los destinos donde se realizarán los servicios.
+              </p>
+            </div>
+
+            <div className="rounded-2xl bg-slate-50 p-4">
+              <div className="text-sm font-bold text-slate-800">
+                3. Asignar servicios
+              </div>
+              <p className="mt-1 text-sm text-slate-500">
+                Relacionar técnico, cliente, fecha, hora y estado.
+              </p>
+            </div>
+          </div>
+        </section>
       </div>
     </main>
   )
