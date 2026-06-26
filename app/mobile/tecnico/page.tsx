@@ -25,6 +25,12 @@ type Servicio = {
   } | null
 }
 
+type UbicacionGPS = {
+  latitud: number | null
+  longitud: number | null
+  precision: number | null
+}
+
 const estados = [
   'Pendiente',
   'En camino',
@@ -40,6 +46,7 @@ export default function MobileTecnicoPage() {
   const [tecnicoId, setTecnicoId] = useState('')
   const [loading, setLoading] = useState(false)
   const [actualizandoId, setActualizandoId] = useState<string | null>(null)
+  const [mensajeGps, setMensajeGps] = useState('')
 
   useEffect(() => {
     cargarTecnicos()
@@ -95,12 +102,72 @@ export default function MobileTecnicoPage() {
     setLoading(false)
   }
 
+  function obtenerUbicacionGPS(): Promise<UbicacionGPS> {
+    return new Promise((resolve) => {
+      if (!navigator.geolocation) {
+        resolve({
+          latitud: null,
+          longitud: null,
+          precision: null,
+        })
+        return
+      }
+
+      setMensajeGps('Solicitando ubicación GPS...')
+
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          resolve({
+            latitud: position.coords.latitude,
+            longitud: position.coords.longitude,
+            precision: position.coords.accuracy,
+          })
+        },
+        (error) => {
+          console.error('Error obteniendo GPS:', error)
+
+          let mensaje = 'No se pudo obtener la ubicación GPS.'
+
+          if (error.code === error.PERMISSION_DENIED) {
+            mensaje = 'Permiso de ubicación denegado por el usuario.'
+          }
+
+          if (error.code === error.POSITION_UNAVAILABLE) {
+            mensaje = 'La ubicación no está disponible en este momento.'
+          }
+
+          if (error.code === error.TIMEOUT) {
+            mensaje = 'La solicitud de ubicación tardó demasiado.'
+          }
+
+          alert(`${mensaje} El cambio de estado se guardará sin GPS.`)
+
+          resolve({
+            latitud: null,
+            longitud: null,
+            precision: null,
+          })
+        },
+        {
+          enableHighAccuracy: true,
+          timeout: 15000,
+          maximumAge: 0,
+        }
+      )
+    })
+  }
+
   async function cambiarEstado(servicio: Servicio, nuevoEstado: string) {
     if (servicio.estado === nuevoEstado) return
 
     setActualizandoId(servicio.id)
+    setMensajeGps('Preparando cambio de estado...')
 
     const estadoAnterior = servicio.estado
+
+    const ubicacion = await obtenerUbicacionGPS()
+
+    setMensajeGps('Guardando cambio de estado...')
 
     const { error: errorServicio } = await supabase
       .from('servicios_rybert_ruta')
@@ -114,6 +181,7 @@ export default function MobileTecnicoPage() {
       console.error('Error actualizando estado:', errorServicio)
       alert(`Error actualizando estado: ${errorServicio.message}`)
       setActualizandoId(null)
+      setMensajeGps('')
       return
     }
 
@@ -124,9 +192,12 @@ export default function MobileTecnicoPage() {
         tecnico_id: servicio.tecnico_id,
         estado_anterior: estadoAnterior,
         estado_nuevo: nuevoEstado,
-        latitud: null,
-        longitud: null,
-        observacion: `Cambio de estado desde móvil: ${estadoAnterior} → ${nuevoEstado}`,
+        latitud: ubicacion.latitud,
+        longitud: ubicacion.longitud,
+        observacion:
+          ubicacion.latitud !== null && ubicacion.longitud !== null
+            ? `Cambio de estado desde móvil con GPS: ${estadoAnterior} → ${nuevoEstado}. Precisión aproximada: ${ubicacion.precision ?? 'N/D'} metros.`
+            : `Cambio de estado desde móvil sin GPS: ${estadoAnterior} → ${nuevoEstado}`,
         fecha_hora: new Date().toISOString(),
       })
 
@@ -142,6 +213,7 @@ export default function MobileTecnicoPage() {
     }
 
     setActualizandoId(null)
+    setMensajeGps('')
   }
 
   function estadoClass(estado: string) {
@@ -167,8 +239,14 @@ export default function MobileTecnicoPage() {
           </h1>
 
           <p className="mt-1 text-sm text-slate-500">
-            Consulta tus servicios asignados y actualiza el estado.
+            Consulta tus servicios asignados, actualiza el estado y registra tu ubicación.
           </p>
+
+          {mensajeGps && (
+            <div className="mt-4 rounded-2xl bg-blue-50 p-3 text-sm font-semibold text-blue-700">
+              {mensajeGps}
+            </div>
+          )}
         </section>
 
         <section className="rounded-3xl bg-white p-5 shadow-sm">
@@ -258,6 +336,10 @@ export default function MobileTecnicoPage() {
                     </button>
                   ))}
                 </div>
+
+                <p className="mt-3 text-center text-xs text-slate-400">
+                  Al cambiar el estado, el sistema intentará guardar la ubicación GPS.
+                </p>
               </div>
             ))}
           </section>
