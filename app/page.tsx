@@ -19,12 +19,18 @@ const modulos = [
     href: '/servicios',
     icono: '🛠️',
   },
+  {
+    titulo: 'Historial administrador',
+    descripcion: 'Supervisión de eventos, GPS, filtros por técnico y fecha.',
+    href: '/mobile/admin/historial-servicios',
+    icono: '🗺️',
+  },
 ]
 
 export default function HomePage() {
   return (
     <main className="min-h-screen bg-slate-100 p-4 md:p-8">
-      <div className="mx-auto max-w-6xl space-y-8">
+      <div className="mx-auto max-w-7xl space-y-8">
         <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm md:p-8">
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <div>
@@ -33,11 +39,12 @@ export default function HomePage() {
               </p>
 
               <h1 className="mt-2 text-3xl font-bold text-slate-900 md:text-4xl">
-                Grupo Rybert Ruta
+                Rybert Ruta
               </h1>
 
               <p className="mt-2 max-w-2xl text-sm text-slate-500 md:text-base">
-                Control básico de técnicos, clientes, servicios y rutas asignadas.
+                Control administrativo de técnicos, clientes, servicios, rutas
+                asignadas, historial de eventos y ubicación GPS.
               </p>
             </div>
 
@@ -50,10 +57,10 @@ export default function HomePage() {
 
         <section>
           <h2 className="mb-4 text-xl font-bold text-slate-900">
-            Menú principal
+            Menú administrativo
           </h2>
 
-          <div className="grid gap-4 md:grid-cols-3">
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
             {modulos.map((modulo) => (
               <Link
                 key={modulo.href}
@@ -82,10 +89,10 @@ export default function HomePage() {
 
         <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
           <h2 className="text-lg font-bold text-slate-900">
-            Flujo actual del sistema
+            Flujo administrativo
           </h2>
 
-          <div className="mt-4 grid gap-3 md:grid-cols-3">
+          <div className="mt-4 grid gap-3 md:grid-cols-4">
             <div className="rounded-2xl bg-slate-50 p-4">
               <div className="text-sm font-bold text-slate-800">
                 1. Registrar técnicos
@@ -112,7 +119,34 @@ export default function HomePage() {
                 Relacionar técnico, cliente, fecha, hora y estado.
               </p>
             </div>
+
+            <div className="rounded-2xl bg-slate-50 p-4">
+              <div className="text-sm font-bold text-slate-800">
+                4. Supervisar historial
+              </div>
+              <p className="mt-1 text-sm text-slate-500">
+                Revisar cambios de estado, filtros y ubicación GPS.
+              </p>
+            </div>
           </div>
+        </section>
+
+        <section className="rounded-3xl border border-blue-100 bg-blue-50 p-6 shadow-sm">
+          <h2 className="text-lg font-bold text-blue-900">
+            Supervisión con GPS
+          </h2>
+
+          <p className="mt-2 text-sm text-blue-700">
+            El administrador puede revisar los eventos registrados por los técnicos,
+            filtrar por técnico y fecha, y abrir la ubicación GPS en Google Maps.
+          </p>
+
+          <Link
+            href="/mobile/admin/historial-servicios"
+            className="mt-4 inline-block rounded-2xl bg-blue-600 px-5 py-3 text-sm font-bold text-white hover:bg-blue-700"
+          >
+            Ver historial administrador →
+          </Link>
         </section>
       </div>
     </main>

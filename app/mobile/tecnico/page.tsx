@@ -6,7 +6,10 @@ import { supabase } from '@/lib/supabase/client'
 type Tecnico = {
   id: string
   nombre_completo: string
+  telefono: string | null
+  correo: string | null
   estado: string
+  codigo_acceso: string | null
 }
 
 type Servicio = {
@@ -41,41 +44,93 @@ const estados = [
 ]
 
 export default function MobileTecnicoPage() {
-  const [tecnicos, setTecnicos] = useState<Tecnico[]>([])
+  const [tecnico, setTecnico] = useState<Tecnico | null>(null)
   const [servicios, setServicios] = useState<Servicio[]>([])
-  const [tecnicoId, setTecnicoId] = useState('')
+
+  const [telefonoLogin, setTelefonoLogin] = useState('')
+  const [codigoLogin, setCodigoLogin] = useState('')
+
   const [loading, setLoading] = useState(false)
+  const [validando, setValidando] = useState(false)
   const [actualizandoId, setActualizandoId] = useState<string | null>(null)
   const [mensajeGps, setMensajeGps] = useState('')
 
   useEffect(() => {
-    cargarTecnicos()
+    const tecnicoGuardado = localStorage.getItem('rybert_tecnico')
+
+    if (tecnicoGuardado) {
+      try {
+        const tecnicoParseado = JSON.parse(tecnicoGuardado) as Tecnico
+        setTecnico(tecnicoParseado)
+        cargarServiciosTecnico(tecnicoParseado.id)
+      } catch {
+        localStorage.removeItem('rybert_tecnico')
+      }
+    }
   }, [])
 
-  useEffect(() => {
-    if (tecnicoId) {
-      cargarServiciosTecnico(tecnicoId)
-    } else {
-      setServicios([])
-    }
-  }, [tecnicoId])
+  async function iniciarSesionTecnico(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault()
 
-  async function cargarTecnicos() {
+    const telefono = telefonoLogin.trim()
+    const codigo = codigoLogin.trim()
+
+    if (!telefono) {
+      alert('Digite su teléfono')
+      return
+    }
+
+    if (!codigo) {
+      alert('Digite su código de acceso')
+      return
+    }
+
+    setValidando(true)
+
     const { data, error } = await supabase
       .from('tecnicos_rybert_ruta')
-      .select('id, nombre_completo, estado')
+      .select('id, nombre_completo, telefono, correo, estado, codigo_acceso')
+      .eq('telefono', telefono)
+      .eq('codigo_acceso', codigo)
       .eq('estado', 'Activo')
-      .order('nombre_completo', { ascending: true })
+      .maybeSingle()
 
     if (error) {
-      console.error('Error cargando técnicos:', error)
-      alert(`Error cargando técnicos: ${error.message}`)
-    } else {
-      setTecnicos(data || [])
+      console.error('Error validando acceso:', error)
+      alert(`Error validando acceso: ${error.message}`)
+      setValidando(false)
+      return
     }
+
+    if (!data) {
+      alert('Teléfono o código incorrecto, o técnico inactivo.')
+      setValidando(false)
+      return
+    }
+
+    const tecnicoEncontrado = data as Tecnico
+
+    setTecnico(tecnicoEncontrado)
+    localStorage.setItem('rybert_tecnico', JSON.stringify(tecnicoEncontrado))
+
+    setTelefonoLogin('')
+    setCodigoLogin('')
+
+    await cargarServiciosTecnico(tecnicoEncontrado.id)
+
+    setValidando(false)
   }
 
-  async function cargarServiciosTecnico(id: string) {
+  function cerrarSesion() {
+    localStorage.removeItem('rybert_tecnico')
+    setTecnico(null)
+    setServicios([])
+    setTelefonoLogin('')
+    setCodigoLogin('')
+    setMensajeGps('')
+  }
+
+  async function cargarServiciosTecnico(tecnicoId: string) {
     setLoading(true)
 
     const { data, error } = await supabase
@@ -88,7 +143,7 @@ export default function MobileTecnicoPage() {
           telefono
         )
       `)
-      .eq('tecnico_id', id)
+      .eq('tecnico_id', tecnicoId)
       .order('fecha_servicio', { ascending: true })
       .order('hora_programada', { ascending: true })
 
@@ -150,21 +205,30 @@ export default function MobileTecnicoPage() {
         },
         {
           enableHighAccuracy: true,
-          timeout: 15000,
-          maximumAge: 0,
+          timeout: 30000,
+          maximumAge: 10000,
         }
       )
     })
   }
 
   async function cambiarEstado(servicio: Servicio, nuevoEstado: string) {
+    if (!tecnico) {
+      alert('Debe iniciar sesión como técnico.')
+      return
+    }
+
+    if (servicio.tecnico_id !== tecnico.id) {
+      alert('Este servicio no pertenece al técnico conectado.')
+      return
+    }
+
     if (servicio.estado === nuevoEstado) return
 
     setActualizandoId(servicio.id)
     setMensajeGps('Preparando cambio de estado...')
 
     const estadoAnterior = servicio.estado
-
     const ubicacion = await obtenerUbicacionGPS()
 
     setMensajeGps('Guardando cambio de estado...')
@@ -176,6 +240,7 @@ export default function MobileTecnicoPage() {
         updated_at: new Date().toISOString(),
       })
       .eq('id', servicio.id)
+      .eq('tecnico_id', tecnico.id)
 
     if (errorServicio) {
       console.error('Error actualizando estado:', errorServicio)
@@ -189,7 +254,7 @@ export default function MobileTecnicoPage() {
       .from('eventos_servicio_rybert_ruta')
       .insert({
         servicio_id: servicio.id,
-        tecnico_id: servicio.tecnico_id,
+        tecnico_id: tecnico.id,
         estado_anterior: estadoAnterior,
         estado_nuevo: nuevoEstado,
         latitud: ubicacion.latitud,
@@ -208,9 +273,7 @@ export default function MobileTecnicoPage() {
       )
     }
 
-    if (tecnicoId) {
-      await cargarServiciosTecnico(tecnicoId)
-    }
+    await cargarServiciosTecnico(tecnico.id)
 
     setActualizandoId(null)
     setMensajeGps('')
@@ -226,6 +289,72 @@ export default function MobileTecnicoPage() {
     return 'bg-slate-100 text-slate-700 border-slate-200'
   }
 
+  if (!tecnico) {
+    return (
+      <main className="min-h-screen bg-slate-100 p-4">
+        <div className="mx-auto max-w-md space-y-4">
+          <section className="rounded-3xl bg-white p-5 shadow-sm">
+            <p className="text-xs font-semibold uppercase tracking-wide text-blue-600">
+              Rybert Ruta
+            </p>
+
+            <h1 className="mt-1 text-2xl font-bold text-slate-900">
+              Acceso del técnico
+            </h1>
+
+            <p className="mt-1 text-sm text-slate-500">
+              Digite su teléfono y código de acceso para ver únicamente sus servicios asignados.
+            </p>
+          </section>
+
+          <section className="rounded-3xl bg-white p-5 shadow-sm">
+            <form onSubmit={iniciarSesionTecnico} className="space-y-4">
+              <div>
+                <label className="mb-2 block text-sm font-semibold text-slate-700">
+                  Teléfono
+                </label>
+
+                <input
+                  type="tel"
+                  value={telefonoLogin}
+                  onChange={(e) => setTelefonoLogin(e.target.value)}
+                  className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-blue-500"
+                  placeholder="809-000-0000"
+                />
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-semibold text-slate-700">
+                  Código de acceso
+                </label>
+
+                <input
+                  type="password"
+                  value={codigoLogin}
+                  onChange={(e) => setCodigoLogin(e.target.value)}
+                  className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-blue-500"
+                  placeholder="Digite su PIN"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={validando}
+                className="w-full rounded-2xl bg-blue-600 px-4 py-3 text-sm font-bold text-white hover:bg-blue-700 disabled:opacity-60"
+              >
+                {validando ? 'Validando...' : 'Entrar'}
+              </button>
+            </form>
+          </section>
+
+          <section className="rounded-3xl bg-white p-4 text-center text-xs text-slate-500 shadow-sm">
+            Cada técnico solo podrá ver los servicios asignados a su usuario.
+          </section>
+        </div>
+      </main>
+    )
+  }
+
   return (
     <main className="min-h-screen bg-slate-100 p-4">
       <div className="mx-auto max-w-md space-y-4">
@@ -239,6 +368,10 @@ export default function MobileTecnicoPage() {
           </h1>
 
           <p className="mt-1 text-sm text-slate-500">
+            Bienvenido, <strong>{tecnico.nombre_completo}</strong>.
+          </p>
+
+          <p className="mt-1 text-sm text-slate-500">
             Consulta tus servicios asignados, actualiza el estado y registra tu ubicación.
           </p>
 
@@ -247,38 +380,31 @@ export default function MobileTecnicoPage() {
               {mensajeGps}
             </div>
           )}
+
+          <div className="mt-4 grid grid-cols-2 gap-2">
+            <button
+              onClick={() => cargarServiciosTecnico(tecnico.id)}
+              className="rounded-2xl border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              Actualizar
+            </button>
+
+            <button
+              onClick={cerrarSesion}
+              className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700 hover:bg-red-100"
+            >
+              Salir
+            </button>
+          </div>
         </section>
 
-        <section className="rounded-3xl bg-white p-5 shadow-sm">
-          <label className="mb-2 block text-sm font-semibold text-slate-700">
-            Selecciona técnico
-          </label>
-
-          <select
-            value={tecnicoId}
-            onChange={(e) => setTecnicoId(e.target.value)}
-            className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-blue-500"
-          >
-            <option value="">Seleccione técnico</option>
-            {tecnicos.map((tecnico) => (
-              <option key={tecnico.id} value={tecnico.id}>
-                {tecnico.nombre_completo}
-              </option>
-            ))}
-          </select>
-        </section>
-
-        {!tecnicoId ? (
-          <section className="rounded-3xl border border-dashed border-slate-300 bg-white p-6 text-center text-sm text-slate-500">
-            Selecciona un técnico para ver sus servicios.
-          </section>
-        ) : loading ? (
+        {loading ? (
           <section className="rounded-3xl bg-white p-6 text-center text-sm text-slate-500">
             Cargando servicios...
           </section>
         ) : servicios.length === 0 ? (
           <section className="rounded-3xl border border-dashed border-slate-300 bg-white p-6 text-center text-sm text-slate-500">
-            Este técnico no tiene servicios asignados.
+            No tienes servicios asignados.
           </section>
         ) : (
           <section className="space-y-4">

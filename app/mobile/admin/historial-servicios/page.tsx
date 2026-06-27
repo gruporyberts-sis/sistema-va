@@ -3,6 +3,13 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase/client'
 
+type Tecnico = {
+  id: string
+  nombre_completo: string
+  telefono: string | null
+  estado: string
+}
+
 type EventoServicio = {
   id: string
   servicio_id: string
@@ -31,16 +38,45 @@ type EventoServicio = {
 
 export default function HistorialServiciosMobileAdminPage() {
   const [eventos, setEventos] = useState<EventoServicio[]>([])
+  const [tecnicos, setTecnicos] = useState<Tecnico[]>([])
+
+  const [tecnicoFiltro, setTecnicoFiltro] = useState('')
+  const [fechaDesde, setFechaDesde] = useState('')
+  const [fechaHasta, setFechaHasta] = useState('')
+
   const [loading, setLoading] = useState(false)
 
   useEffect(() => {
-    cargarHistorial()
+    cargarTecnicos()
+    cargarHistorial({
+      tecnicoId: '',
+      desde: '',
+      hasta: '',
+    })
   }, [])
 
-  async function cargarHistorial() {
+  async function cargarTecnicos() {
+    const { data, error } = await supabase
+      .from('tecnicos_rybert_ruta')
+      .select('id, nombre_completo, telefono, estado')
+      .order('nombre_completo', { ascending: true })
+
+    if (error) {
+      console.error('Error cargando técnicos:', error)
+      alert(`Error cargando técnicos: ${error.message}`)
+    } else {
+      setTecnicos(data || [])
+    }
+  }
+
+  async function cargarHistorial(filtros: {
+    tecnicoId: string
+    desde: string
+    hasta: string
+  }) {
     setLoading(true)
 
-    const { data, error } = await supabase
+    let query = supabase
       .from('eventos_servicio_rybert_ruta')
       .select(`
         *,
@@ -60,6 +96,20 @@ export default function HistorialServiciosMobileAdminPage() {
       `)
       .order('fecha_hora', { ascending: false })
 
+    if (filtros.tecnicoId) {
+      query = query.eq('tecnico_id', filtros.tecnicoId)
+    }
+
+    if (filtros.desde) {
+      query = query.gte('fecha_hora', `${filtros.desde}T00:00:00`)
+    }
+
+    if (filtros.hasta) {
+      query = query.lte('fecha_hora', `${filtros.hasta}T23:59:59`)
+    }
+
+    const { data, error } = await query
+
     if (error) {
       console.error('Error cargando historial:', error)
       alert(`Error cargando historial: ${error.message}`)
@@ -68,6 +118,26 @@ export default function HistorialServiciosMobileAdminPage() {
     }
 
     setLoading(false)
+  }
+
+  function aplicarFiltros() {
+    cargarHistorial({
+      tecnicoId: tecnicoFiltro,
+      desde: fechaDesde,
+      hasta: fechaHasta,
+    })
+  }
+
+  function limpiarFiltros() {
+    setTecnicoFiltro('')
+    setFechaDesde('')
+    setFechaHasta('')
+
+    cargarHistorial({
+      tecnicoId: '',
+      desde: '',
+      hasta: '',
+    })
   }
 
   function formatearFecha(fecha: string) {
@@ -102,15 +172,77 @@ export default function HistorialServiciosMobileAdminPage() {
           </h1>
 
           <p className="mt-1 text-sm text-slate-500">
-            Vista móvil para que el administrador revise los cambios realizados por los técnicos.
+            Vista móvil para revisar los cambios realizados por los técnicos.
           </p>
 
-          <button
-            onClick={cargarHistorial}
-            className="mt-4 w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-          >
-            Actualizar historial
-          </button>
+          <div className="mt-4 space-y-3">
+            <div>
+              <label className="mb-2 block text-sm font-semibold text-slate-700">
+                Filtrar por técnico
+              </label>
+
+              <select
+                value={tecnicoFiltro}
+                onChange={(e) => setTecnicoFiltro(e.target.value)}
+                className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-blue-500"
+              >
+                <option value="">Todos los técnicos</option>
+                {tecnicos.map((tecnico) => (
+                  <option key={tecnico.id} value={tecnico.id}>
+                    {tecnico.nombre_completo}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="mb-2 block text-sm font-semibold text-slate-700">
+                  Desde
+                </label>
+
+                <input
+                  type="date"
+                  value={fechaDesde}
+                  onChange={(e) => setFechaDesde(e.target.value)}
+                  className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-semibold text-slate-700">
+                  Hasta
+                </label>
+
+                <input
+                  type="date"
+                  value={fechaHasta}
+                  onChange={(e) => setFechaHasta(e.target.value)}
+                  className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-blue-500"
+                />
+              </div>
+            </div>
+
+            <button
+              onClick={aplicarFiltros}
+              className="w-full rounded-2xl bg-blue-600 px-4 py-3 text-sm font-bold text-white hover:bg-blue-700"
+            >
+              Aplicar filtros
+            </button>
+
+            <button
+              onClick={limpiarFiltros}
+              className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              Limpiar filtros
+            </button>
+          </div>
+        </section>
+
+        <section className="rounded-3xl bg-white p-4 shadow-sm">
+          <div className="text-sm font-semibold text-slate-700">
+            Eventos encontrados: {eventos.length}
+          </div>
         </section>
 
         {loading ? (
@@ -119,7 +251,7 @@ export default function HistorialServiciosMobileAdminPage() {
           </section>
         ) : eventos.length === 0 ? (
           <section className="rounded-3xl border border-dashed border-slate-300 bg-white p-6 text-center text-sm text-slate-500">
-            No hay eventos registrados todavía.
+            No hay eventos registrados para este filtro.
           </section>
         ) : (
           <section className="space-y-4">
@@ -173,6 +305,11 @@ export default function HistorialServiciosMobileAdminPage() {
                     <strong>Hora:</strong>{' '}
                     {evento.servicios_rybert_ruta?.hora_programada || 'Sin hora'}
                   </div>
+
+                  <div className="mt-1">
+                    <strong>Tel. técnico:</strong>{' '}
+                    {evento.tecnicos_rybert_ruta?.telefono || '-'}
+                  </div>
                 </div>
 
                 <div className="mt-4 grid grid-cols-2 gap-2">
@@ -208,6 +345,17 @@ export default function HistorialServiciosMobileAdminPage() {
                       ? `${evento.latitud}, ${evento.longitud}`
                       : 'Pendiente de GPS'}
                   </div>
+
+                  {evento.latitud !== null && evento.longitud !== null && (
+                    <a
+                      href={`https://www.google.com/maps?q=${evento.latitud},${evento.longitud}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mt-3 block rounded-xl bg-blue-600 px-4 py-2 text-center text-sm font-bold text-white"
+                    >
+                      Ver ubicación en Google Maps
+                    </a>
+                  )}
                 </div>
               </article>
             ))}

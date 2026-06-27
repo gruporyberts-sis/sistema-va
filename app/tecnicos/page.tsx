@@ -9,6 +9,7 @@ type Tecnico = {
   telefono: string | null
   correo: string | null
   estado: string
+  codigo_acceso: string | null
   created_at: string
 }
 
@@ -21,6 +22,7 @@ export default function TecnicosPage() {
     nombre_completo: '',
     telefono: '',
     correo: '',
+    codigo_acceso: '',
     estado: 'Activo',
   })
 
@@ -54,12 +56,23 @@ export default function TecnicosPage() {
       return
     }
 
+    if (!form.telefono.trim()) {
+      alert('El teléfono es obligatorio para el acceso móvil')
+      return
+    }
+
+    if (!form.codigo_acceso.trim()) {
+      alert('El PIN / código de acceso es obligatorio')
+      return
+    }
+
     setGuardando(true)
 
     const { error } = await supabase.from('tecnicos_rybert_ruta').insert({
       nombre_completo: form.nombre_completo.trim(),
-      telefono: form.telefono.trim() || null,
+      telefono: form.telefono.trim(),
       correo: form.correo.trim() || null,
+      codigo_acceso: form.codigo_acceso.trim(),
       estado: form.estado,
     })
 
@@ -71,6 +84,7 @@ export default function TecnicosPage() {
         nombre_completo: '',
         telefono: '',
         correo: '',
+        codigo_acceso: '',
         estado: 'Activo',
       })
 
@@ -98,6 +112,11 @@ export default function TecnicosPage() {
     }
   }
 
+  function mostrarPin(pin: string | null) {
+    if (!pin) return '-'
+    return '••••'
+  }
+
   return (
     <main className="min-h-screen bg-slate-100 p-4 md:p-8">
       <div className="mx-auto max-w-6xl space-y-6">
@@ -106,7 +125,7 @@ export default function TecnicosPage() {
             Rybert Ruta - Técnicos
           </h1>
           <p className="mt-1 text-sm text-slate-500">
-            Registro básico de técnicos para el control de rutas.
+            Registro básico de técnicos para el control de rutas y acceso móvil.
           </p>
         </section>
 
@@ -134,7 +153,7 @@ export default function TecnicosPage() {
 
               <div>
                 <label className="mb-1 block text-sm font-medium text-slate-700">
-                  Teléfono
+                  Teléfono *
                 </label>
                 <input
                   type="text"
@@ -145,6 +164,9 @@ export default function TecnicosPage() {
                   className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
                   placeholder="809-000-0000"
                 />
+                <p className="mt-1 text-xs text-slate-500">
+                  Este teléfono será usado para entrar al panel móvil.
+                </p>
               </div>
 
               <div>
@@ -160,6 +182,25 @@ export default function TecnicosPage() {
                   className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
                   placeholder="correo@ejemplo.com"
                 />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium text-slate-700">
+                  PIN / Código de acceso *
+                </label>
+                <input
+                  type="password"
+                  value={form.codigo_acceso}
+                  onChange={(e) =>
+                    setForm({ ...form, codigo_acceso: e.target.value })
+                  }
+                  className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
+                  placeholder="Ej. 1234"
+                  maxLength={10}
+                />
+                <p className="mt-1 text-xs text-slate-500">
+                  El técnico usará este código junto con su teléfono para acceder.
+                </p>
               </div>
 
               <div>
@@ -218,6 +259,7 @@ export default function TecnicosPage() {
                       <th className="px-3 py-3 font-semibold">Técnico</th>
                       <th className="px-3 py-3 font-semibold">Teléfono</th>
                       <th className="px-3 py-3 font-semibold">Correo</th>
+                      <th className="px-3 py-3 font-semibold">PIN</th>
                       <th className="px-3 py-3 font-semibold">Estado</th>
                       <th className="px-3 py-3 font-semibold text-right">
                         Acción
@@ -238,6 +280,10 @@ export default function TecnicosPage() {
 
                         <td className="px-3 py-3 text-slate-600">
                           {tecnico.correo || '-'}
+                        </td>
+
+                        <td className="px-3 py-3 text-slate-600">
+                          {mostrarPin(tecnico.codigo_acceso)}
                         </td>
 
                         <td className="px-3 py-3">
