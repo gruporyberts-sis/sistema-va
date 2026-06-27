@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { supabase } from "@/app/lib/supabaseClient";
+import { useEffect, useRef, useState } from 'react'
+import { supabase } from '@/lib/supabase/client'
 
 type UbicacionEstado = {
   latitud: number | null;
