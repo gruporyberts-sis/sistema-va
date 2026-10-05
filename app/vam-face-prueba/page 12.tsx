@@ -1316,8 +1316,8 @@ function DatoAsistencia({titulo,valor}:{titulo:string;valor:string}) {
 
 
 /* =========================================================
-   MOTOR FACIAL NEURONAL HUMAN - v0.1.32 DEV
-   - Embedding facial dimensión neuronal dinámica
+   MOTOR FACIAL NEURONAL HUMAN - v0.1.31 DEV
+   - Embedding facial 1024D
    - No guarda fotografías
    - Comparación 1:N con Human.match.similarity
 ========================================================= */
@@ -1336,7 +1336,7 @@ function cargarScriptHuman(): Promise<void> {
     }
 
     const script = document.createElement("script");
-    script.src = "/human.js";
+    script.src = "https://cdn.jsdelivr.net/npm/@vladmandic/human@3.3.6/dist/human.js";
     script.async = true;
     script.dataset.vamHuman = "1";
     script.onload = () => resolve();
@@ -1355,7 +1355,7 @@ async function obtenerHumanVam(): Promise<any> {
 
     const human = new HumanGlobal.Human({
       backend: "webgl",
-      modelBasePath: "https://cdn.jsdelivr.net/npm/@vladmandic/human@3.3.6/models/",
+      modelBasePath: "https://vladmandic.github.io/human-models/models/",
       cacheSensitivity: 0,
       filter: { enabled: true, equalization: true, flip: false },
       face: {
@@ -1365,8 +1365,8 @@ async function obtenerHumanVam(): Promise<any> {
         description: { enabled: true },
         iris: { enabled: false },
         emotion: { enabled: false },
-        antispoof: { enabled: true },
-        liveness: { enabled: true },
+        antispoof: { enabled: false },
+        liveness: { enabled: false },
       },
       body: { enabled: false },
       hand: { enabled: false },
@@ -1375,7 +1375,6 @@ async function obtenerHumanVam(): Promise<any> {
     });
 
     await human.load();
-    await human.warmup();
     return human;
   })();
 
@@ -1395,129 +1394,12 @@ async function embeddingHumanDesdeVideo(video: HTMLVideoElement): Promise<number
     throw new Error("Debe aparecer una sola persona frente a la cámara.");
   }
 
-  const rostro = resultado.face[0];
-  const real = Number(rostro?.real ?? 0);
-  const live = Number(rostro?.live ?? 0);
-  const UMBRAL_SEGURIDAD_FACIAL = 0.60;
-
-  if (!Number.isFinite(real) || real < UMBRAL_SEGURIDAD_FACIAL) {
-    throw new Error(`Validación antispoof rechazada (${Math.round(real * 100)}%). Usa tu rostro real frente a la cámara.`);
-  }
-  if (!Number.isFinite(live) || live < UMBRAL_SEGURIDAD_FACIAL) {
-    throw new Error(`Prueba de vida rechazada (${Math.round(live * 100)}%). Mira directamente a la cámara y vuelve a intentar.`);
-  }
-
-  const embedding = rostro?.embedding;
+  const embedding = resultado.face[0]?.embedding;
   if (!Array.isArray(embedding) || embedding.length < 128) {
     throw new Error("No fue posible generar el descriptor neuronal del rostro.");
   }
 
   return embedding.map((v: unknown) => Number(v));
-}
-
-
-type DireccionVidaActiva = "IZQUIERDA" | "DERECHA";
-
-function yawHumanRostro(rostro: any): number | null {
-  const candidatos = [
-    rostro?.rotation?.angle?.yaw,
-    rostro?.rotation?.yaw,
-    rostro?.angle?.yaw,
-    rostro?.yaw,
-  ];
-  for (const valor of candidatos) {
-    const n = Number(valor);
-    if (Number.isFinite(n)) return n;
-  }
-  return null;
-}
-
-async function detectarRostroHuman(video: HTMLVideoElement): Promise<any> {
-  const human = await obtenerHumanVam();
-  const resultado = await human.detect(video);
-  if (!resultado?.face?.length) throw new Error("No se detectó un rostro. Mantén el rostro dentro de la guía.");
-  if (resultado.face.length !== 1) throw new Error("Debe aparecer una sola persona frente a la cámara.");
-  return resultado.face[0];
-}
-
-async function pruebaVidaActivaHuman(
-  video: HTMLVideoElement,
-  informar: (mensaje: string, detalle?: string) => void
-): Promise<void> {
-  const direccion: DireccionVidaActiva = Math.random() < 0.5 ? "IZQUIERDA" : "DERECHA";
-  const textoDireccion = direccion === "IZQUIERDA" ? "izquierda" : "derecha";
-  const esperar = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
-  const LIMITE_MS = 8500;
-  const PASO_MS = 240;
-  const DELTA_YAW = 0.16;
-  const RETORNO_YAW = 0.10;
-  const UMBRAL_REAL = 0.60;
-  const UMBRAL_LIVE = 0.60;
-
-  informar("Mire al frente", "Preparando prueba de vida…");
-  await esperar(650);
-
-  const inicial = await detectarRostroHuman(video);
-  const yawInicial = yawHumanRostro(inicial);
-  if (yawInicial === null) throw new Error("No fue posible medir el movimiento de la cabeza. Intenta nuevamente.");
-
-  const realInicial = Number(inicial?.real ?? 0);
-  const liveInicial = Number(inicial?.live ?? 0);
-  if (!Number.isFinite(realInicial) || realInicial < UMBRAL_REAL) {
-    throw new Error(`Antispoof rechazado (${Math.round(realInicial * 100)}%).`);
-  }
-  if (!Number.isFinite(liveInicial) || liveInicial < UMBRAL_LIVE) {
-    throw new Error(`Prueba de vida rechazada (${Math.round(liveInicial * 100)}%).`);
-  }
-
-  informar(`Gire la cabeza hacia la ${textoDireccion}`, "Mantenga el celular quieto y mueva solamente la cabeza");
-  const inicio = Date.now();
-  let giroDetectado = false;
-  let signoDetectado = 0;
-
-  while (Date.now() - inicio < LIMITE_MS) {
-    await esperar(PASO_MS);
-    const rostro = await detectarRostroHuman(video);
-    const yaw = yawHumanRostro(rostro);
-    if (yaw === null) continue;
-    const delta = yaw - yawInicial;
-    if (Math.abs(delta) >= DELTA_YAW) {
-      giroDetectado = true;
-      signoDetectado = Math.sign(delta) || 1;
-      break;
-    }
-  }
-
-  if (!giroDetectado) {
-    throw new Error(`Prueba de vida no completada. Gira claramente la cabeza hacia la ${textoDireccion}.`);
-  }
-
-  informar("Vuelva a mirar al frente", "Último paso de la prueba de vida");
-  const inicioRetorno = Date.now();
-  let retornoDetectado = false;
-  while (Date.now() - inicioRetorno < 5000) {
-    await esperar(PASO_MS);
-    const rostro = await detectarRostroHuman(video);
-    const yaw = yawHumanRostro(rostro);
-    if (yaw === null) continue;
-    const delta = yaw - yawInicial;
-    if (Math.abs(delta) <= RETORNO_YAW) {
-      const real = Number(rostro?.real ?? 0);
-      const live = Number(rostro?.live ?? 0);
-      if (Number.isFinite(real) && real >= UMBRAL_REAL && Number.isFinite(live) && live >= UMBRAL_LIVE) {
-        retornoDetectado = true;
-        break;
-      }
-    }
-  }
-
-  if (!retornoDetectado) throw new Error("Prueba de vida incompleta. Vuelve a mirar directamente a la cámara.");
-
-  // El signo se conserva únicamente para exigir un cambio de pose real. La vista previa
-  // está espejada y algunos navegadores reportan el eje yaw invertido, por lo que no
-  // usamos el signo como criterio de izquierda/derecha hasta calibrarlo por dispositivo.
-  void signoDetectado;
-  informar("Prueba de vida aprobada", "Verificando identidad…");
 }
 
 async function similitudHuman(a: number[], b: number[]): Promise<number> {
@@ -1529,7 +1411,7 @@ async function similitudHuman(a: number[], b: number[]): Promise<number> {
 
 
 /* =========================================================
-   MODO KIOSCO - v0.1.33 DEV
+   MODO KIOSCO - v0.1.31 DEV
 ========================================================= */
 function PantallaKiosco({
   sesion,
@@ -1556,15 +1438,18 @@ function PantallaKiosco({
 
   useEffect(()=>{
     let activo=true;
+
     const iniciar=async()=>{
       try{
         await obtenerHumanVam();
         if(!activo)return;
         setMotorListo(true);
+
         const s=await navigator.mediaDevices.getUserMedia({
           video:{facingMode:"user",width:{ideal:720},height:{ideal:720}},
           audio:false
         });
+
         if(!activo){s.getTracks().forEach(x=>x.stop());return;}
         setStream(s);
         if(videoRef.current){
@@ -1573,13 +1458,14 @@ function PantallaKiosco({
         }
         setEstado("CAMARA");
         setMensaje("Colóquese frente a la cámara");
-        setDetalle("Motor neuronal + prueba de vida listos");
+        setDetalle("Motor neuronal listo");
       }catch(x:any){
         setEstado("ERROR");
         setMensaje("No fue posible iniciar el reconocimiento facial");
         setDetalle(x?.message||"Verifica Internet, HTTPS y el permiso de cámara.");
       }
     };
+
     iniciar();
     return()=>{activo=false};
   },[]);
@@ -1590,17 +1476,13 @@ function PantallaKiosco({
     if(bloqueado||estado==="PROCESANDO"||!motorListo)return;
     setBloqueado(true);
     setEstado("PROCESANDO");
-    setMensaje("Iniciando prueba de vida…");
-    setDetalle("Siga la instrucción en pantalla");
+    setMensaje("Analizando rostro con IA…");
+    setDetalle("Generando descriptor neuronal");
     setPorcentaje(null);
 
     try{
       const video=videoRef.current;
       if(!video)throw new Error("La cámara no está disponible.");
-
-      await pruebaVidaActivaHuman(video,(m,d)=>{setMensaje(m);setDetalle(d||"");});
-      setMensaje("Reconociendo empleado…");
-      setDetalle("Comparando plantilla neuronal");
 
       const emb=await embeddingHumanDesdeVideo(video);
 
@@ -1615,15 +1497,13 @@ function PantallaKiosco({
 
       let mejor:any=null;
       let score=-1;
-      let segundoScore=-1;
 
       for(const b of bio){
         const arr=Array.isArray(b.embedding)?b.embedding:(b.embedding?.values||[]);
         const vector=arr.map(Number).filter((v:number)=>Number.isFinite(v));
         if(vector.length!==emb.length)continue;
         const s=await similitudHuman(vector,emb);
-        if(s>score){segundoScore=score;score=s;mejor=b}
-        else if(s>segundoScore){segundoScore=s}
+        if(s>score){score=s;mejor=b}
       }
 
       const porcentajeActual=Math.max(0,Math.min(100,Math.round(score)));
@@ -1655,20 +1535,20 @@ function PantallaKiosco({
 
       setEstado("OK");
       setMensaje(`${tipo} registrada`);
-      setDetalle(`${e.nombres} ${e.apellidos} · Vida activa aprobada`);
+      setDetalle(`${e.nombres} ${e.apellidos}`);
       setPorcentaje(Math.round(score));
     }catch(x:any){
       setEstado("ERROR");
       setMensaje(x?.message||"No fue posible registrar la marcación.");
-      setDetalle("Marcación cancelada");
+      setDetalle("");
     }finally{
       setTimeout(()=>{
         setEstado("CAMARA");
         setMensaje("Colóquese frente a la cámara");
-        setDetalle(motorListo?"Motor neuronal + prueba de vida listos":"");
+        setDetalle(motorListo?"Motor neuronal listo":"");
         setPorcentaje(null);
         setBloqueado(false);
-      },4000);
+      },3500);
     }
   };
 
@@ -1682,18 +1562,18 @@ function PantallaKiosco({
         <video ref={videoRef} playsInline muted style={{width:"100%",height:"100%",objectFit:"cover",transform:"scaleX(-1)"}}/>
         <div style={styles.guiaRostro} />
       </div>
-      <div style={{textAlign:"center",marginTop:18,minHeight:100}}>
+      <div style={{textAlign:"center",marginTop:18,minHeight:88}}>
         <div style={{fontSize:estado==="OK"?27:22,fontWeight:900,color:estado==="OK"?"#6ee7b7":estado==="ERROR"?"#fca5a5":"#fff"}}>{mensaje}</div>
         {detalle&&<div style={{fontSize:15,marginTop:6,opacity:.85}}>{detalle}</div>}
         {porcentaje!==null&&<div style={{fontSize:30,fontWeight:900,marginTop:8,color:porcentaje>=UMBRAL_HUMAN?"#6ee7b7":"#fca5a5"}}>{porcentaje}%</div>}
-        <div style={{fontSize:12,marginTop:6,opacity:.6}}>Reconocimiento neuronal + prueba de vida activa</div>
+        <div style={{fontSize:12,marginTop:6,opacity:.6}}>Umbral neuronal DEV: {UMBRAL_HUMAN}%</div>
       </div>
       <button disabled={bloqueado||!motorListo} onClick={marcar} style={{width:"min(92vw,520px)",border:0,borderRadius:18,padding:"17px 20px",fontSize:18,fontWeight:900,background:(bloqueado||!motorListo)?"#475569":"#14b8a6",color:"#fff"}}>
-        {!motorListo?"CARGANDO MOTOR…":estado==="PROCESANDO"?"SIGA LA INSTRUCCIÓN…":"MARCAR AHORA"}
+        {!motorListo?"CARGANDO MOTOR…":estado==="PROCESANDO"?"VERIFICANDO…":"MARCAR AHORA"}
       </button>
       <button onClick={abrirAdministracion} style={{marginTop:14,border:"1px solid rgba(148,163,184,.35)",borderRadius:12,background:"transparent",color:"#94a3b8",fontSize:12,padding:"9px 14px"}}>⚙ Administración</button>
     </main>
-    <div style={{textAlign:"center",padding:12,fontSize:10,opacity:.45}}>v0.1.33 DEV · Human neural + Active Liveness</div>
+    <div style={{textAlign:"center",padding:12,fontSize:10,opacity:.45}}>v0.1.31 DEV · Human neural embedding 1024D</div>
   </div>
 }
 
@@ -4252,7 +4132,7 @@ function PantallaVerificarBiometriaEmpleado({
       </section>
       {similitud!==null&&<div style={styles.biometriaNueva}><div><div style={{fontWeight:700,fontSize:13}}>Similitud neuronal</div><div style={styles.textoPequeno}>Umbral DEV: {UMBRAL_HUMAN}%</div></div><span style={similitud>=UMBRAL_HUMAN?styles.biometriaOk:styles.biometriaPendiente}>{similitud}%</span></div>}
       {resultado&&<div style={styles.mensajeInfo}>{resultado}</div>}
-      <div style={styles.avisoDev}>DEV: embedding neuronal Human. No se guarda fotografía. Liveness y antispoof activos. Pendiente para producción: protección de plantillas y autenticación segura del dispositivo.</div>
+      <div style={styles.avisoDev}>DEV: embedding neuronal Human. No se guarda fotografía. Antes de producción agregaremos liveness, protección de plantillas y autenticación segura del dispositivo.</div>
       <Pie/>
     </Layout>
   );

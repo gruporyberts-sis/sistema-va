@@ -1314,222 +1314,8 @@ function DatoAsistencia({titulo,valor}:{titulo:string;valor:string}) {
   );
 }
 
-
 /* =========================================================
-   MOTOR FACIAL NEURONAL HUMAN - v0.1.32 DEV
-   - Embedding facial dimensión neuronal dinámica
-   - No guarda fotografías
-   - Comparación 1:N con Human.match.similarity
-========================================================= */
-let vamHumanPromise: Promise<any> | null = null;
-
-function cargarScriptHuman(): Promise<void> {
-  if (typeof window === "undefined") return Promise.reject(new Error("Human requiere navegador."));
-  if ((window as any).Human?.Human) return Promise.resolve();
-
-  return new Promise((resolve, reject) => {
-    const existente = document.querySelector('script[data-vam-human="1"]') as HTMLScriptElement | null;
-    if (existente) {
-      existente.addEventListener("load", () => resolve(), { once: true });
-      existente.addEventListener("error", () => reject(new Error("No fue posible cargar Human.")), { once: true });
-      return;
-    }
-
-    const script = document.createElement("script");
-    script.src = "/human.js";
-    script.async = true;
-    script.dataset.vamHuman = "1";
-    script.onload = () => resolve();
-    script.onerror = () => reject(new Error("No fue posible cargar el motor facial Human."));
-    document.head.appendChild(script);
-  });
-}
-
-async function obtenerHumanVam(): Promise<any> {
-  if (vamHumanPromise) return vamHumanPromise;
-
-  vamHumanPromise = (async () => {
-    await cargarScriptHuman();
-    const HumanGlobal = (window as any).Human;
-    if (!HumanGlobal?.Human) throw new Error("Human no quedó disponible en el navegador.");
-
-    const human = new HumanGlobal.Human({
-      backend: "webgl",
-      modelBasePath: "https://cdn.jsdelivr.net/npm/@vladmandic/human@3.3.6/models/",
-      cacheSensitivity: 0,
-      filter: { enabled: true, equalization: true, flip: false },
-      face: {
-        enabled: true,
-        detector: { rotation: true, maxDetected: 2 },
-        mesh: { enabled: true },
-        description: { enabled: true },
-        iris: { enabled: false },
-        emotion: { enabled: false },
-        antispoof: { enabled: true },
-        liveness: { enabled: true },
-      },
-      body: { enabled: false },
-      hand: { enabled: false },
-      object: { enabled: false },
-      gesture: { enabled: false },
-    });
-
-    await human.load();
-    await human.warmup();
-    return human;
-  })();
-
-  return vamHumanPromise;
-}
-
-async function embeddingHumanDesdeVideo(video: HTMLVideoElement): Promise<number[]> {
-  if (!video.videoWidth || !video.videoHeight) throw new Error("La cámara todavía no está lista.");
-
-  const human = await obtenerHumanVam();
-  const resultado = await human.detect(video);
-
-  if (!resultado?.face?.length) {
-    throw new Error("No se detectó un rostro. Acércate y mejora la iluminación.");
-  }
-  if (resultado.face.length !== 1) {
-    throw new Error("Debe aparecer una sola persona frente a la cámara.");
-  }
-
-  const rostro = resultado.face[0];
-  const real = Number(rostro?.real ?? 0);
-  const live = Number(rostro?.live ?? 0);
-  const UMBRAL_SEGURIDAD_FACIAL = 0.60;
-
-  if (!Number.isFinite(real) || real < UMBRAL_SEGURIDAD_FACIAL) {
-    throw new Error(`Validación antispoof rechazada (${Math.round(real * 100)}%). Usa tu rostro real frente a la cámara.`);
-  }
-  if (!Number.isFinite(live) || live < UMBRAL_SEGURIDAD_FACIAL) {
-    throw new Error(`Prueba de vida rechazada (${Math.round(live * 100)}%). Mira directamente a la cámara y vuelve a intentar.`);
-  }
-
-  const embedding = rostro?.embedding;
-  if (!Array.isArray(embedding) || embedding.length < 128) {
-    throw new Error("No fue posible generar el descriptor neuronal del rostro.");
-  }
-
-  return embedding.map((v: unknown) => Number(v));
-}
-
-
-type DireccionVidaActiva = "IZQUIERDA" | "DERECHA";
-
-function yawHumanRostro(rostro: any): number | null {
-  const candidatos = [
-    rostro?.rotation?.angle?.yaw,
-    rostro?.rotation?.yaw,
-    rostro?.angle?.yaw,
-    rostro?.yaw,
-  ];
-  for (const valor of candidatos) {
-    const n = Number(valor);
-    if (Number.isFinite(n)) return n;
-  }
-  return null;
-}
-
-async function detectarRostroHuman(video: HTMLVideoElement): Promise<any> {
-  const human = await obtenerHumanVam();
-  const resultado = await human.detect(video);
-  if (!resultado?.face?.length) throw new Error("No se detectó un rostro. Mantén el rostro dentro de la guía.");
-  if (resultado.face.length !== 1) throw new Error("Debe aparecer una sola persona frente a la cámara.");
-  return resultado.face[0];
-}
-
-async function pruebaVidaActivaHuman(
-  video: HTMLVideoElement,
-  informar: (mensaje: string, detalle?: string) => void
-): Promise<void> {
-  const direccion: DireccionVidaActiva = Math.random() < 0.5 ? "IZQUIERDA" : "DERECHA";
-  const textoDireccion = direccion === "IZQUIERDA" ? "izquierda" : "derecha";
-  const esperar = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
-  const LIMITE_MS = 8500;
-  const PASO_MS = 240;
-  const DELTA_YAW = 0.16;
-  const RETORNO_YAW = 0.10;
-  const UMBRAL_REAL = 0.60;
-  const UMBRAL_LIVE = 0.60;
-
-  informar("Mire al frente", "Preparando prueba de vida…");
-  await esperar(650);
-
-  const inicial = await detectarRostroHuman(video);
-  const yawInicial = yawHumanRostro(inicial);
-  if (yawInicial === null) throw new Error("No fue posible medir el movimiento de la cabeza. Intenta nuevamente.");
-
-  const realInicial = Number(inicial?.real ?? 0);
-  const liveInicial = Number(inicial?.live ?? 0);
-  if (!Number.isFinite(realInicial) || realInicial < UMBRAL_REAL) {
-    throw new Error(`Antispoof rechazado (${Math.round(realInicial * 100)}%).`);
-  }
-  if (!Number.isFinite(liveInicial) || liveInicial < UMBRAL_LIVE) {
-    throw new Error(`Prueba de vida rechazada (${Math.round(liveInicial * 100)}%).`);
-  }
-
-  informar(`Gire la cabeza hacia la ${textoDireccion}`, "Mantenga el celular quieto y mueva solamente la cabeza");
-  const inicio = Date.now();
-  let giroDetectado = false;
-  let signoDetectado = 0;
-
-  while (Date.now() - inicio < LIMITE_MS) {
-    await esperar(PASO_MS);
-    const rostro = await detectarRostroHuman(video);
-    const yaw = yawHumanRostro(rostro);
-    if (yaw === null) continue;
-    const delta = yaw - yawInicial;
-    if (Math.abs(delta) >= DELTA_YAW) {
-      giroDetectado = true;
-      signoDetectado = Math.sign(delta) || 1;
-      break;
-    }
-  }
-
-  if (!giroDetectado) {
-    throw new Error(`Prueba de vida no completada. Gira claramente la cabeza hacia la ${textoDireccion}.`);
-  }
-
-  informar("Vuelva a mirar al frente", "Último paso de la prueba de vida");
-  const inicioRetorno = Date.now();
-  let retornoDetectado = false;
-  while (Date.now() - inicioRetorno < 5000) {
-    await esperar(PASO_MS);
-    const rostro = await detectarRostroHuman(video);
-    const yaw = yawHumanRostro(rostro);
-    if (yaw === null) continue;
-    const delta = yaw - yawInicial;
-    if (Math.abs(delta) <= RETORNO_YAW) {
-      const real = Number(rostro?.real ?? 0);
-      const live = Number(rostro?.live ?? 0);
-      if (Number.isFinite(real) && real >= UMBRAL_REAL && Number.isFinite(live) && live >= UMBRAL_LIVE) {
-        retornoDetectado = true;
-        break;
-      }
-    }
-  }
-
-  if (!retornoDetectado) throw new Error("Prueba de vida incompleta. Vuelve a mirar directamente a la cámara.");
-
-  // El signo se conserva únicamente para exigir un cambio de pose real. La vista previa
-  // está espejada y algunos navegadores reportan el eje yaw invertido, por lo que no
-  // usamos el signo como criterio de izquierda/derecha hasta calibrarlo por dispositivo.
-  void signoDetectado;
-  informar("Prueba de vida aprobada", "Verificando identidad…");
-}
-
-async function similitudHuman(a: number[], b: number[]): Promise<number> {
-  if (!a.length || a.length !== b.length) return 0;
-  const human = await obtenerHumanVam();
-  const valor = Number(human.match.similarity(a, b));
-  return Math.max(0, Math.min(100, Math.round(valor * 100)));
-}
-
-
-/* =========================================================
-   MODO KIOSCO - v0.1.33 DEV
+   MODO KIOSCO - v0.1.30 DEV
 ========================================================= */
 function PantallaKiosco({
   sesion,
@@ -1541,98 +1327,89 @@ function PantallaKiosco({
   abrirAdministracion: () => void | Promise<void>;
 }) {
   const videoRef=React.useRef<HTMLVideoElement|null>(null);
+  const canvasRef=React.useRef<HTMLCanvasElement|null>(null);
   const [stream,setStream]=useState<MediaStream|null>(null);
   const [estado,setEstado]=useState<"CAMARA"|"PROCESANDO"|"OK"|"ERROR">("CAMARA");
-  const [mensaje,setMensaje]=useState("Inicializando cámara y motor facial…");
+  const [mensaje,setMensaje]=useState("Colóquese frente a la cámara");
   const [detalle,setDetalle]=useState("");
   const [porcentaje,setPorcentaje]=useState<number|null>(null);
   const [hora,setHora]=useState(new Date());
   const [bloqueado,setBloqueado]=useState(false);
-  const [motorListo,setMotorListo]=useState(false);
-
-  const UMBRAL_HUMAN = 60;
 
   useEffect(()=>{const i=setInterval(()=>setHora(new Date()),1000);return()=>clearInterval(i)},[]);
 
   useEffect(()=>{
     let activo=true;
-    const iniciar=async()=>{
-      try{
-        await obtenerHumanVam();
-        if(!activo)return;
-        setMotorListo(true);
-        const s=await navigator.mediaDevices.getUserMedia({
-          video:{facingMode:"user",width:{ideal:720},height:{ideal:720}},
-          audio:false
-        });
-        if(!activo){s.getTracks().forEach(x=>x.stop());return;}
-        setStream(s);
-        if(videoRef.current){
-          videoRef.current.srcObject=s;
-          await videoRef.current.play();
-        }
-        setEstado("CAMARA");
-        setMensaje("Colóquese frente a la cámara");
-        setDetalle("Motor neuronal + prueba de vida listos");
-      }catch(x:any){
-        setEstado("ERROR");
-        setMensaje("No fue posible iniciar el reconocimiento facial");
-        setDetalle(x?.message||"Verifica Internet, HTTPS y el permiso de cámara.");
-      }
-    };
-    iniciar();
+    navigator.mediaDevices.getUserMedia({video:{facingMode:"user"},audio:false})
+      .then(s=>{if(!activo){s.getTracks().forEach(x=>x.stop());return;}setStream(s);if(videoRef.current){videoRef.current.srcObject=s;videoRef.current.play().catch(()=>{})}})
+      .catch(()=>{setEstado("ERROR");setMensaje("No fue posible abrir la cámara");setDetalle("Verifica el permiso de cámara del dispositivo.")});
     return()=>{activo=false};
   },[]);
 
   useEffect(()=>()=>{stream?.getTracks().forEach(x=>x.stop())},[stream]);
 
-  const marcar=async()=>{
-    if(bloqueado||estado==="PROCESANDO"||!motorListo)return;
-    setBloqueado(true);
-    setEstado("PROCESANDO");
-    setMensaje("Iniciando prueba de vida…");
-    setDetalle("Siga la instrucción en pantalla");
-    setPorcentaje(null);
+  const capturarVector = async (): Promise<number[]|null> => {
+    const video=videoRef.current, canvas=canvasRef.current;
+    if (!video || !canvas || !video.videoWidth || !video.videoHeight) return null;
 
-    try{
-      const video=videoRef.current;
-      if(!video)throw new Error("La cámara no está disponible.");
-
-      await pruebaVidaActivaHuman(video,(m,d)=>{setMensaje(m);setDetalle(d||"");});
-      setMensaje("Reconociendo empleado…");
-      setDetalle("Comparando plantilla neuronal");
-
-      const emb=await embeddingHumanDesdeVideo(video);
-
-      const {data:bio,error:be}=await supabase.from("biometrias_faciales")
-        .select("empleado_id,embedding,modelo,empleados!inner(id,codigo_empleado,nombres,apellidos,sucursal_id,estado)")
-        .eq("empresa_id",sesion.empresaId)
-        .eq("estado","ACTIVA")
-        .eq("modelo","VAM_FACE_HUMAN_NEURAL");
-
-      if(be)throw be;
-      if(!bio?.length)throw new Error("No hay empleados enrolados con el nuevo motor neuronal.");
-
-      let mejor:any=null;
-      let score=-1;
-      let segundoScore=-1;
-
-      for(const b of bio){
-        const arr=Array.isArray(b.embedding)?b.embedding:(b.embedding?.values||[]);
-        const vector=arr.map(Number).filter((v:number)=>Number.isFinite(v));
-        if(vector.length!==emb.length)continue;
-        const s=await similitudHuman(vector,emb);
-        if(s>score){segundoScore=score;score=s;mejor=b}
-        else if(s>segundoScore){segundoScore=s}
+    const Detector=(window as any).FaceDetector;
+    if (Detector) {
+      const caras=await new Detector({fastMode:true,maxDetectedFaces:2}).detect(video);
+      if (caras.length!==1) {
+        setMensaje(caras.length===0 ? "No se detectó un rostro." : "Debe aparecer una sola persona.");
+        return null;
       }
+    }
 
+    const size=96, grid=12, block=size/grid;
+    canvas.width=size; canvas.height=size;
+    const ctx=canvas.getContext("2d");
+    if (!ctx) return null;
+    ctx.save(); ctx.translate(size,0); ctx.scale(-1,1); ctx.drawImage(video,0,0,size,size); ctx.restore();
+    const data=ctx.getImageData(0,0,size,size).data;
+    const vector:number[]=[]; let mediaGlobal=0,totalPixeles=0;
+    for(let gy=0;gy<grid;gy++) for(let gx=0;gx<grid;gx++){
+      let suma=0,cantidad=0;
+      for(let y=Math.floor(gy*block);y<Math.floor((gy+1)*block);y++)
+        for(let x=Math.floor(gx*block);x<Math.floor((gx+1)*block);x++){
+          const i=(y*size+x)*4;
+          const lum=data[i]*.299+data[i+1]*.587+data[i+2]*.114;
+          suma+=lum; mediaGlobal+=lum; cantidad++; totalPixeles++;
+        }
+      vector.push(cantidad?suma/cantidad:0);
+    }
+    mediaGlobal=totalPixeles?mediaGlobal/totalPixeles:0;
+    const centrado=vector.map(v=>v-mediaGlobal);
+    const norma=Math.sqrt(centrado.reduce((a,v)=>a+v*v,0))||1;
+    return centrado.map(v=>Number((v/norma).toFixed(8)));
+  };
+
+  const similitud=(a:number[],b:number[])=>{
+    let p=0,na=0,nb=0;
+    for(let i=0;i<a.length;i++){p+=a[i]*b[i];na+=a[i]*a[i];nb+=b[i]*b[i];}
+    const cos=p/((Math.sqrt(na)*Math.sqrt(nb))||1);
+    return Math.max(0,Math.min(100,Math.round(((cos+1)/2)*100)));
+  };
+
+  const marcar=async()=>{
+    if(bloqueado||estado==="PROCESANDO")return;
+    setBloqueado(true);setEstado("PROCESANDO");setMensaje("Verificando rostro…");setDetalle("");setPorcentaje(null);
+    try{
+      const emb=await capturarVector();
+      if(!emb) throw new Error("No fue posible capturar el rostro.");
+      const {data:bio,error:be}=await supabase.from("biometrias_faciales")
+        .select("empleado_id,embedding,empleados!inner(id,codigo_empleado,nombres,apellidos,sucursal_id,estado)")
+        .eq("empresa_id",sesion.empresaId).eq("estado","ACTIVA");
+      if(be)throw be;
+      let mejor:any=null,score=-1;
+      for(const b of bio||[]){
+        const arr=Array.isArray(b.embedding)?b.embedding:(b.embedding?.values||[]);
+        const s=similitud(arr.map(Number),emb);
+        if(s>score){score=s;mejor=b}
+      }
       const porcentajeActual=Math.max(0,Math.min(100,Math.round(score)));
       setPorcentaje(porcentajeActual);
-
-      if(!mejor||score<UMBRAL_HUMAN){
-        throw new Error(`Rostro no reconocido. Mejor coincidencia: ${porcentajeActual}%`);
-      }
-
+      if(!mejor||score<88)throw new Error(`Rostro no reconocido. Mejor coincidencia: ${porcentajeActual}%`);
       const e:any=Array.isArray(mejor.empleados)?mejor.empleados[0]:mejor.empleados;
       if(!e||e.estado!=="ACTIVO")throw new Error("Empleado no disponible para marcar.");
 
@@ -1643,7 +1420,7 @@ function PantallaKiosco({
       if(le)throw le;
       const tipo=last?.[0]?.tipo==="ENTRADA"?"SALIDA":"ENTRADA";
 
-      const {error:re}=await supabase.rpc("registrar_marcacion_facial_dev",{
+      const {data:rpc,error:re}=await supabase.rpc("registrar_marcacion_facial_dev",{
         p_empresa_id:sesion.empresaId,
         p_empleado_id:mejor.empleado_id,
         p_sucursal_id:e.sucursal_id||null,
@@ -1653,22 +1430,13 @@ function PantallaKiosco({
       });
       if(re)throw re;
 
-      setEstado("OK");
-      setMensaje(`${tipo} registrada`);
-      setDetalle(`${e.nombres} ${e.apellidos} · Vida activa aprobada`);
+      setEstado("OK");setMensaje(`${tipo} registrada`);
+      setDetalle(`${e.nombres} ${e.apellidos}`);
       setPorcentaje(Math.round(score));
     }catch(x:any){
-      setEstado("ERROR");
-      setMensaje(x?.message||"No fue posible registrar la marcación.");
-      setDetalle("Marcación cancelada");
+      setEstado("ERROR");setMensaje(x?.message||"No fue posible registrar la marcación.");setDetalle("");
     }finally{
-      setTimeout(()=>{
-        setEstado("CAMARA");
-        setMensaje("Colóquese frente a la cámara");
-        setDetalle(motorListo?"Motor neuronal + prueba de vida listos":"");
-        setPorcentaje(null);
-        setBloqueado(false);
-      },4000);
+      setTimeout(()=>{setEstado("CAMARA");setMensaje("Colóquese frente a la cámara");setDetalle("");setPorcentaje(null);setBloqueado(false)},3000);
     }
   };
 
@@ -1682,18 +1450,19 @@ function PantallaKiosco({
         <video ref={videoRef} playsInline muted style={{width:"100%",height:"100%",objectFit:"cover",transform:"scaleX(-1)"}}/>
         <div style={styles.guiaRostro} />
       </div>
-      <div style={{textAlign:"center",marginTop:18,minHeight:100}}>
+      <canvas ref={canvasRef} style={{display:"none"}}/>
+      <div style={{textAlign:"center",marginTop:18,minHeight:70}}>
         <div style={{fontSize:estado==="OK"?27:22,fontWeight:900,color:estado==="OK"?"#6ee7b7":estado==="ERROR"?"#fca5a5":"#fff"}}>{mensaje}</div>
         {detalle&&<div style={{fontSize:15,marginTop:6,opacity:.85}}>{detalle}</div>}
-        {porcentaje!==null&&<div style={{fontSize:30,fontWeight:900,marginTop:8,color:porcentaje>=UMBRAL_HUMAN?"#6ee7b7":"#fca5a5"}}>{porcentaje}%</div>}
-        <div style={{fontSize:12,marginTop:6,opacity:.6}}>Reconocimiento neuronal + prueba de vida activa</div>
+        {porcentaje!==null&&<div style={{fontSize:30,fontWeight:900,marginTop:8,color:porcentaje>=88?"#6ee7b7":"#fca5a5"}}>{porcentaje}%</div>}
+        <div style={{fontSize:12,marginTop:6,opacity:.6}}>Umbral de reconocimiento: 88%</div>
       </div>
-      <button disabled={bloqueado||!motorListo} onClick={marcar} style={{width:"min(92vw,520px)",border:0,borderRadius:18,padding:"17px 20px",fontSize:18,fontWeight:900,background:(bloqueado||!motorListo)?"#475569":"#14b8a6",color:"#fff"}}>
-        {!motorListo?"CARGANDO MOTOR…":estado==="PROCESANDO"?"SIGA LA INSTRUCCIÓN…":"MARCAR AHORA"}
+      <button disabled={bloqueado} onClick={marcar} style={{width:"min(92vw,520px)",border:0,borderRadius:18,padding:"17px 20px",fontSize:18,fontWeight:900,background:bloqueado?"#475569":"#14b8a6",color:"#fff"}}>
+        {estado==="PROCESANDO"?"VERIFICANDO…":"MARCAR AHORA"}
       </button>
       <button onClick={abrirAdministracion} style={{marginTop:14,border:"1px solid rgba(148,163,184,.35)",borderRadius:12,background:"transparent",color:"#94a3b8",fontSize:12,padding:"9px 14px"}}>⚙ Administración</button>
     </main>
-    <div style={{textAlign:"center",padding:12,fontSize:10,opacity:.45}}>v0.1.33 DEV · Human neural + Active Liveness</div>
+    <div style={{textAlign:"center",padding:12,fontSize:10,opacity:.45}}>v0.1.30 DEV · reconocimiento visual provisional</div>
   </div>
 }
 
@@ -4153,7 +3922,9 @@ function PantallaVerificarBiometriaEmpleado({
   volver: () => void;
 }) {
   const videoRef = React.useRef<HTMLVideoElement | null>(null);
+  const canvasRef = React.useRef<HTMLCanvasElement | null>(null);
   const streamRef = React.useRef<MediaStream | null>(null);
+
   const [camaraActiva, setCamaraActiva] = useState(false);
   const [estadoCamara, setEstadoCamara] = useState("Cámara detenida");
   const [resultado, setResultado] = useState("");
@@ -4163,97 +3934,326 @@ function PantallaVerificarBiometriaEmpleado({
   const [modelo, setModelo] = useState("");
   const [versionModelo, setVersionModelo] = useState("");
   const [similitud, setSimilitud] = useState<number | null>(null);
-  const UMBRAL_HUMAN = 60;
 
   React.useEffect(() => {
     let cancelado = false;
-    const cargar = async () => {
-      const { data, error } = await supabase.from("biometrias_faciales")
+
+    const cargarPlantilla = async () => {
+      setCargandoPlantilla(true);
+      setResultado("");
+
+      const { data, error } = await supabase
+        .from("biometrias_faciales")
         .select("embedding,modelo,version_modelo,estado,created_at")
         .eq("empresa_id", sesion.empresaId)
         .eq("empleado_id", empleado.id)
         .eq("estado", "ACTIVA")
-        .eq("modelo", "VAM_FACE_HUMAN_NEURAL")
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle();
 
       if (cancelado) return;
-      if (error) setResultado(`No fue posible cargar la plantilla: ${error.message}`);
-      else if (!data || !Array.isArray(data.embedding)) setResultado("Este empleado debe enrolarse nuevamente con el motor neuronal.");
-      else {
-        setPlantillaGuardada(data.embedding.map((v:unknown)=>Number(v)));
-        setModelo(data.modelo || "");
-        setVersionModelo(data.version_modelo || "");
-        setResultado(`Plantilla neuronal ACTIVA de ${empleado.nombre} cargada.`);
+
+      if (error) {
+        setResultado(`No fue posible cargar la plantilla: ${error.message}`);
+        setCargandoPlantilla(false);
+        return;
       }
+
+      if (!data || !Array.isArray(data.embedding)) {
+        setResultado("Este empleado no tiene una plantilla biométrica ACTIVA disponible.");
+        setCargandoPlantilla(false);
+        return;
+      }
+
+      const vector = data.embedding.map((valor: unknown) => Number(valor));
+      if (vector.length !== 144 || vector.some((valor: number) => !Number.isFinite(valor))) {
+        setResultado("La plantilla almacenada no tiene el formato DEV esperado de 144 valores.");
+        setCargandoPlantilla(false);
+        return;
+      }
+
+      setPlantillaGuardada(vector);
+      setModelo(data.modelo || "");
+      setVersionModelo(data.version_modelo || "");
+      setResultado(`Plantilla ACTIVA de ${empleado.nombre} cargada desde Supabase.`);
       setCargandoPlantilla(false);
     };
-    cargar();
-    return()=>{cancelado=true;streamRef.current?.getTracks().forEach(t=>t.stop())};
-  },[sesion.empresaId,empleado.id,empleado.nombre]);
 
-  const iniciarCamara=async()=>{
+    cargarPlantilla();
+
+    return () => {
+      cancelado = true;
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+    };
+  }, [sesion.empresaId, empleado.id, empleado.nombre]);
+
+  const iniciarCamara = async () => {
     setSimilitud(null);
-    try{
-      await obtenerHumanVam();
-      const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"user",width:{ideal:720},height:{ideal:720}},audio:false});
-      streamRef.current=stream;
-      if(videoRef.current){videoRef.current.srcObject=stream;await videoRef.current.play();}
-      setCamaraActiva(true);setEstadoCamara("Cámara frontal activa · motor neuronal listo");
-    }catch(x:any){setEstadoCamara(x?.message||"No se pudo abrir la cámara.");}
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setEstadoCamara("Este navegador no permite acceso a la cámara.");
+        return;
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: "user",
+          width: { ideal: 720 },
+          height: { ideal: 720 },
+        },
+        audio: false,
+      });
+
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+      }
+
+      setCamaraActiva(true);
+      setEstadoCamara("Cámara frontal activa");
+    } catch {
+      setEstadoCamara(
+        "No se pudo abrir la cámara. Verifica el permiso del navegador y usa HTTPS o localhost."
+      );
+    }
   };
 
-  const detenerCamara=()=>{
-    streamRef.current?.getTracks().forEach(t=>t.stop());streamRef.current=null;
-    if(videoRef.current)videoRef.current.srcObject=null;
-    setCamaraActiva(false);setEstadoCamara("Cámara detenida");
+  const detenerCamara = () => {
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+    if (videoRef.current) videoRef.current.srcObject = null;
+    setCamaraActiva(false);
+    setEstadoCamara("Cámara detenida");
   };
 
-  const comparar=async()=>{
-    if(!plantillaGuardada||!videoRef.current)return;
-    setProcesando(true);setSimilitud(null);
-    try{
-      const muestra=await embeddingHumanDesdeVideo(videoRef.current);
-      const pct=await similitudHuman(plantillaGuardada,muestra);
-      setSimilitud(pct);
-      setResultado(pct>=UMBRAL_HUMAN?`Coincidencia neuronal confirmada con ${empleado.nombre}.`:`La captura no supera el umbral neuronal DEV de ${UMBRAL_HUMAN}%.`);
-    }catch(x:any){setResultado(x?.message||"No fue posible completar la comparación facial.");}
-    finally{setProcesando(false);}
+  const generarPlantillaActual = async (): Promise<number[] | null> => {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+
+    if (!video || !canvas || video.videoWidth === 0 || video.videoHeight === 0) {
+      setResultado("No fue posible obtener imagen de la cámara.");
+      return null;
+    }
+
+    const Detector = (window as any).FaceDetector;
+    if (Detector) {
+      const detector = new Detector({ fastMode: true, maxDetectedFaces: 2 });
+      const caras = await detector.detect(video);
+      if (caras.length !== 1) {
+        setResultado(
+          caras.length === 0
+            ? "No se detectó un rostro. Acércate y mejora la iluminación."
+            : "Se detectó más de un rostro. Debe aparecer una sola persona."
+        );
+        return null;
+      }
+    }
+
+    const size = 96;
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      setResultado("No fue posible preparar la captura.");
+      return null;
+    }
+
+    ctx.save();
+    ctx.translate(size, 0);
+    ctx.scale(-1, 1);
+    ctx.drawImage(video, 0, 0, size, size);
+    ctx.restore();
+
+    const imageData = ctx.getImageData(0, 0, size, size);
+    const data = imageData.data;
+    const grid = 12;
+    const block = size / grid;
+    const vector: number[] = [];
+    let mediaGlobal = 0;
+    let totalPixeles = 0;
+
+    for (let gy = 0; gy < grid; gy++) {
+      for (let gx = 0; gx < grid; gx++) {
+        let suma = 0;
+        let cantidad = 0;
+        for (let y = Math.floor(gy * block); y < Math.floor((gy + 1) * block); y++) {
+          for (let x = Math.floor(gx * block); x < Math.floor((gx + 1) * block); x++) {
+            const i = (y * size + x) * 4;
+            const lum = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
+            suma += lum;
+            mediaGlobal += lum;
+            cantidad++;
+            totalPixeles++;
+          }
+        }
+        vector.push(cantidad ? suma / cantidad : 0);
+      }
+    }
+
+    mediaGlobal = totalPixeles ? mediaGlobal / totalPixeles : 0;
+    const centrado = vector.map((v) => v - mediaGlobal);
+    const norma = Math.sqrt(centrado.reduce((acc, v) => acc + v * v, 0)) || 1;
+    return centrado.map((v) => Number((v / norma).toFixed(8)));
+  };
+
+  const comparar = async () => {
+    if (!plantillaGuardada) {
+      setResultado("Primero debe cargarse la plantilla ACTIVA desde Supabase.");
+      return;
+    }
+
+    setProcesando(true);
+    setSimilitud(null);
+
+    try {
+      const muestra = await generarPlantillaActual();
+      if (!muestra) return;
+
+      let producto = 0;
+      let normaA = 0;
+      let normaB = 0;
+
+      for (let i = 0; i < plantillaGuardada.length; i++) {
+        producto += plantillaGuardada[i] * muestra[i];
+        normaA += plantillaGuardada[i] * plantillaGuardada[i];
+        normaB += muestra[i] * muestra[i];
+      }
+
+      const coseno = producto / ((Math.sqrt(normaA) * Math.sqrt(normaB)) || 1);
+      const porcentaje = Math.max(
+        0,
+        Math.min(100, Math.round(((coseno + 1) / 2) * 100))
+      );
+
+      setSimilitud(porcentaje);
+
+      if (porcentaje >= 92) {
+        setResultado(`Coincidencia DEV confirmada con ${empleado.nombre}.`);
+      } else {
+        setResultado(
+          `La captura no supera el umbral DEV de 88% para ${empleado.nombre}.`
+        );
+      }
+    } catch {
+      setResultado("No fue posible completar la comparación facial.");
+    } finally {
+      setProcesando(false);
+    }
   };
 
   return (
     <Layout>
-      <button onClick={()=>{detenerCamara();volver();}} style={styles.volver}>← Ficha del empleado</button>
-      <div style={{marginTop:20}}><Cabecera subtitulo="Verificación biométrica neuronal 1:1" /></div>
-      <section style={{marginTop:30}}>
-        <div style={styles.etiqueta}>Comparación neuronal DEV</div>
+      <button
+        onClick={() => {
+          detenerCamara();
+          volver();
+        }}
+        style={styles.volver}
+      >
+        ← Ficha del empleado
+      </button>
+
+      <div style={{ marginTop: 20 }}>
+        <Cabecera subtitulo="Verificación biométrica 1:1" />
+      </div>
+
+      <section style={{ marginTop: 30 }}>
+        <div style={styles.etiqueta}>Comparación controlada DEV</div>
         <h1 style={styles.tituloDashboard}>{empleado.nombre}</h1>
-        <p style={styles.descripcion}>La captura se compara con el embedding neuronal ACTIVO almacenado en Supabase.</p>
+        <p style={styles.descripcion}>
+          La nueva captura se compara con la plantilla ACTIVA recuperada desde Supabase.
+        </p>
       </section>
+
       <section style={styles.fichaEmpleado}>
-        <DatoEmpleado titulo="Plantilla almacenada" valor={cargandoPlantilla?"Cargando...":plantillaGuardada?`${plantillaGuardada.length} valores`:"No disponible"} />
-        <DatoEmpleado titulo="Modelo" valor={modelo||"—"} />
-        <DatoEmpleado titulo="Versión" valor={versionModelo||"—"} />
+        <DatoEmpleado
+          titulo="Plantilla almacenada"
+          valor={
+            cargandoPlantilla
+              ? "Cargando..."
+              : plantillaGuardada
+              ? `${plantillaGuardada.length} valores`
+              : "No disponible"
+          }
+        />
+        <DatoEmpleado titulo="Modelo" valor={modelo || "—"} />
+        <DatoEmpleado titulo="Versión" valor={versionModelo || "—"} />
       </section>
+
       <section style={styles.camaraCard}>
         <div style={styles.videoMarco}>
-          <video ref={videoRef} playsInline muted style={{width:"100%",height:"100%",objectFit:"cover",transform:"scaleX(-1)",display:camaraActiva?"block":"none"}} />
-          {!camaraActiva&&<div style={styles.camaraVacia}>◎</div>}
-          <div style={styles.guiaRostro}/>
+          <video
+            ref={videoRef}
+            playsInline
+            muted
+            style={{
+              width: "100%",
+              height: "100%",
+              objectFit: "cover",
+              transform: "scaleX(-1)",
+              display: camaraActiva ? "block" : "none",
+            }}
+          />
+          {!camaraActiva && <div style={styles.camaraVacia}>◎</div>}
+          <div style={styles.guiaRostro} />
         </div>
+
         <div style={styles.estadoCamara}>{estadoCamara}</div>
-        {!camaraActiva?
-          <button onClick={iniciarCamara} disabled={!plantillaGuardada||cargandoPlantilla} style={{...styles.botonPrincipal,opacity:!plantillaGuardada||cargandoPlantilla?.5:1}}>Activar cámara frontal</button>:
-          <button onClick={detenerCamara} style={styles.botonCancelar}>Detener cámara</button>}
-        <button type="button" onClick={comparar} disabled={!camaraActiva||!plantillaGuardada||procesando} style={{...styles.botonSecundarioVerde,opacity:!camaraActiva||!plantillaGuardada||procesando?.5:1}}>
-          {procesando?"Comparando…":"Comparar rostro con plantilla"}
+
+        {!camaraActiva ? (
+          <button
+            onClick={iniciarCamara}
+            disabled={!plantillaGuardada || cargandoPlantilla}
+            style={{
+              ...styles.botonPrincipal,
+              opacity: !plantillaGuardada || cargandoPlantilla ? 0.5 : 1,
+            }}
+          >
+            Activar cámara frontal
+          </button>
+        ) : (
+          <button onClick={detenerCamara} style={styles.botonCancelar}>
+            Detener cámara
+          </button>
+        )}
+
+        <button
+          type="button"
+          onClick={comparar}
+          disabled={!camaraActiva || !plantillaGuardada || procesando}
+          style={{
+            ...styles.botonSecundarioVerde,
+            opacity: !camaraActiva || !plantillaGuardada || procesando ? 0.5 : 1,
+          }}
+        >
+          {procesando ? "Comparando..." : "Comparar rostro con plantilla"}
         </button>
       </section>
-      {similitud!==null&&<div style={styles.biometriaNueva}><div><div style={{fontWeight:700,fontSize:13}}>Similitud neuronal</div><div style={styles.textoPequeno}>Umbral DEV: {UMBRAL_HUMAN}%</div></div><span style={similitud>=UMBRAL_HUMAN?styles.biometriaOk:styles.biometriaPendiente}>{similitud}%</span></div>}
-      {resultado&&<div style={styles.mensajeInfo}>{resultado}</div>}
-      <div style={styles.avisoDev}>DEV: embedding neuronal Human. No se guarda fotografía. Liveness y antispoof activos. Pendiente para producción: protección de plantillas y autenticación segura del dispositivo.</div>
-      <Pie/>
+
+      {similitud !== null && (
+        <div style={styles.biometriaNueva}>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: 13 }}>Similitud DEV</div>
+            <div style={styles.textoPequeno}>Umbral de prueba: 88%</div>
+          </div>
+          <span style={similitud >= 92 ? styles.biometriaOk : styles.biometriaPendiente}>
+            {similitud}%
+          </span>
+        </div>
+      )}
+
+      {resultado && <div style={styles.mensajeInfo}>{resultado}</div>}
+
+      <div style={styles.avisoDev}>
+        DEV: esta comparación usa la plantilla visual 12x12 almacenada en Supabase.
+        Sirve para validar el flujo 1:1 y no constituye todavía reconocimiento facial
+        biométrico de producción ni registra asistencia.
+      </div>
+
+      <canvas ref={canvasRef} style={{ display: "none" }} />
+      <Pie />
     </Layout>
   );
 }
@@ -4276,99 +4276,318 @@ function PantallaRegistroBiometriaEmpleado({
   cancelar: () => void;
   registrado: () => Promise<void>;
 }) {
-  const videoRef=React.useRef<HTMLVideoElement|null>(null);
-  const streamRef=React.useRef<MediaStream|null>(null);
-  const [camaraActiva,setCamaraActiva]=useState(false);
-  const [estadoCamara,setEstadoCamara]=useState("Cámara detenida");
-  const [resultado,setResultado]=useState("");
-  const [procesando,setProcesando]=useState(false);
-  const [muestraLista,setMuestraLista]=useState(false);
-  const [embedding,setEmbedding]=useState<number[]|null>(null);
+  const videoRef = React.useRef<HTMLVideoElement | null>(null);
+  const canvasRef = React.useRef<HTMLCanvasElement | null>(null);
+  const streamRef = React.useRef<MediaStream | null>(null);
 
-  React.useEffect(()=>()=>{streamRef.current?.getTracks().forEach(t=>t.stop())},[]);
+  const [camaraActiva, setCamaraActiva] = useState(false);
+  const [estadoCamara, setEstadoCamara] = useState("Cámara detenida");
+  const [resultado, setResultado] = useState("");
+  const [procesando, setProcesando] = useState(false);
+  const [muestraLista, setMuestraLista] = useState(false);
+  const [plantillaDev, setPlantillaDev] = useState<number[] | null>(null);
 
-  const iniciarCamara=async()=>{
+  React.useEffect(() => {
+    return () => {
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+    };
+  }, []);
+
+  const iniciarCamara = async () => {
     setResultado("");
-    try{
-      setEstadoCamara("Cargando motor neuronal…");
-      await obtenerHumanVam();
-      const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"user",width:{ideal:720},height:{ideal:720}},audio:false});
-      streamRef.current=stream;
-      if(videoRef.current){videoRef.current.srcObject=stream;await videoRef.current.play();}
-      setCamaraActiva(true);setEstadoCamara("Cámara frontal activa · Human listo");
-    }catch(x:any){setEstadoCamara(x?.message||"No se pudo abrir la cámara.");}
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setEstadoCamara("Este navegador no permite acceso a la cámara.");
+        return;
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: "user",
+          width: { ideal: 720 },
+          height: { ideal: 720 },
+        },
+        audio: false,
+      });
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+      }
+      setCamaraActiva(true);
+      setEstadoCamara("Cámara frontal activa");
+    } catch {
+      setEstadoCamara(
+        "No se pudo abrir la cámara. Verifica el permiso del navegador y usa HTTPS o localhost."
+      );
+    }
   };
 
-  const detenerCamara=()=>{
-    streamRef.current?.getTracks().forEach(t=>t.stop());streamRef.current=null;
-    if(videoRef.current)videoRef.current.srcObject=null;
-    setCamaraActiva(false);setEstadoCamara("Cámara detenida");
+  const detenerCamara = () => {
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+    if (videoRef.current) videoRef.current.srcObject = null;
+    setCamaraActiva(false);
+    setEstadoCamara("Cámara detenida");
   };
 
-  const capturar=async()=>{
-    if(!videoRef.current)return;
-    setProcesando(true);setResultado("");setMuestraLista(false);setEmbedding(null);
-    try{
-      const vector=await embeddingHumanDesdeVideo(videoRef.current);
-      setEmbedding(vector);setMuestraLista(true);
-      setResultado(`Embedding neuronal de ${vector.length} valores preparado para ${empleado.nombre}.`);
-    }catch(x:any){setResultado(x?.message||"No fue posible validar la captura facial.");}
-    finally{setProcesando(false);}
+  const capturar = async () => {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas || video.videoWidth === 0 || video.videoHeight === 0) {
+      setResultado("No fue posible obtener imagen de la cámara.");
+      return;
+    }
+
+    setProcesando(true);
+    setResultado("");
+
+    try {
+      const Detector = (window as any).FaceDetector;
+      if (Detector) {
+        const detector = new Detector({ fastMode: true, maxDetectedFaces: 2 });
+        const caras = await detector.detect(video);
+        if (caras.length !== 1) {
+          setMuestraLista(false);
+          setResultado(
+            caras.length === 0
+              ? "No se detectó un rostro. Acércate y mejora la iluminación."
+              : "Se detectó más de un rostro. Debe aparecer una sola persona."
+          );
+          return;
+        }
+      }
+
+      const size = 96;
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        setResultado("No fue posible preparar la captura.");
+        return;
+      }
+
+      ctx.save();
+      ctx.translate(size, 0);
+      ctx.scale(-1, 1);
+      ctx.drawImage(video, 0, 0, size, size);
+      ctx.restore();
+
+      // Plantilla visual DEV: 12 x 12 bloques de luminancia normalizada.
+      // No es todavía un embedding neuronal de producción.
+      const image = ctx.getImageData(0, 0, size, size);
+      const data = image.data;
+      const grid = 12;
+      const block = size / grid;
+      const vector: number[] = [];
+      let mediaGlobal = 0;
+      let totalPixeles = 0;
+
+      for (let gy = 0; gy < grid; gy++) {
+        for (let gx = 0; gx < grid; gx++) {
+          let suma = 0;
+          let cantidad = 0;
+          for (let y = Math.floor(gy * block); y < Math.floor((gy + 1) * block); y++) {
+            for (let x = Math.floor(gx * block); x < Math.floor((gx + 1) * block); x++) {
+              const i = (y * size + x) * 4;
+              const lum = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
+              suma += lum;
+              mediaGlobal += lum;
+              cantidad++;
+              totalPixeles++;
+            }
+          }
+          vector.push(cantidad ? suma / cantidad : 0);
+        }
+      }
+
+      mediaGlobal = totalPixeles ? mediaGlobal / totalPixeles : 0;
+      const centrado = vector.map((v) => v - mediaGlobal);
+      const norma = Math.sqrt(centrado.reduce((acc, v) => acc + v * v, 0)) || 1;
+      const plantilla = centrado.map((v) => Number((v / norma).toFixed(8)));
+
+      setPlantillaDev(plantilla);
+      setMuestraLista(true);
+      setResultado(`Rostro capturado y plantilla DEV preparada para ${empleado.nombre}.`);
+    } catch {
+      setMuestraLista(false);
+      setResultado("No fue posible validar la captura facial.");
+    } finally {
+      setProcesando(false);
+    }
   };
 
-  const confirmarRegistro=async()=>{
-    if(!muestraLista||!embedding){setResultado("Primero captura el rostro del empleado.");return;}
-    setProcesando(true);setResultado("");
+  const confirmarRegistro = async () => {
+    if (!muestraLista || !plantillaDev) {
+      setResultado("Primero captura el rostro del empleado.");
+      return;
+    }
 
-    const {error:revocarError}=await supabase.from("biometrias_faciales")
-      .update({estado:"REVOCADA",updated_at:new Date().toISOString()})
-      .eq("empresa_id",sesion.empresaId).eq("empleado_id",empleado.id).eq("estado","ACTIVA");
-    if(revocarError){setResultado(`No fue posible preparar la actualización biométrica: ${revocarError.message}`);setProcesando(false);return;}
+    setProcesando(true);
+    setResultado("");
 
-    const {error:biometriaError}=await supabase.from("biometrias_faciales").insert({
-      empresa_id:sesion.empresaId,
-      empleado_id:empleado.id,
-      tipo:"FACIAL",
-      embedding,
-      modelo:"VAM_FACE_HUMAN_NEURAL",
-      version_modelo:"3.3.6",
-      estado:"ACTIVA",
-    });
-    if(biometriaError){setResultado(`No fue posible guardar la plantilla neuronal: ${biometriaError.message}`);setProcesando(false);return;}
+    // Si existe una plantilla activa anterior, se revoca antes de crear la nueva.
+    // Así conservamos historial y respetamos el índice único de una biometría ACTIVA
+    // por empleado.
+    const { error: revocarError } = await supabase
+      .from("biometrias_faciales")
+      .update({
+        estado: "REVOCADA",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("empresa_id", sesion.empresaId)
+      .eq("empleado_id", empleado.id)
+      .eq("estado", "ACTIVA");
 
-    const {error:empleadoError}=await supabase.from("empleados").update({biometria_registrada:true})
-      .eq("id",empleado.id).eq("empresa_id",sesion.empresaId);
-    if(empleadoError){setResultado(`La plantilla fue guardada, pero no se pudo actualizar el empleado: ${empleadoError.message}`);setProcesando(false);return;}
+    if (revocarError) {
+      console.error("VAM FACE REVOCAR BIOMETRIA ERROR:", revocarError);
+      setResultado(`No fue posible preparar la actualización biométrica: ${revocarError.message}`);
+      setProcesando(false);
+      return;
+    }
 
-    detenerCamara();await registrado();setProcesando(false);
+    const { error: biometriaError } = await supabase
+      .from("biometrias_faciales")
+      .insert({
+        empresa_id: sesion.empresaId,
+        empleado_id: empleado.id,
+        tipo: "FACIAL",
+        embedding: plantillaDev,
+        modelo: "VAM_FACE_VISUAL_DEV",
+        version_modelo: "0.1.13",
+        estado: "ACTIVA",
+      });
+
+    if (biometriaError) {
+      console.error("VAM FACE GUARDAR PLANTILLA ERROR:", biometriaError);
+      setResultado(`No fue posible guardar la nueva plantilla biométrica: ${biometriaError.message}`);
+      setProcesando(false);
+      return;
+    }
+
+    const { error: empleadoError } = await supabase
+      .from("empleados")
+      .update({ biometria_registrada: true })
+      .eq("id", empleado.id)
+      .eq("empresa_id", sesion.empresaId);
+
+    if (empleadoError) {
+      console.error("VAM FACE ESTADO BIOMETRIA ERROR:", empleadoError);
+      setResultado(
+        `La plantilla fue guardada, pero no se pudo actualizar el estado del empleado: ${empleadoError.message}`
+      );
+      setProcesando(false);
+      return;
+    }
+
+    detenerCamara();
+    await registrado();
+    setProcesando(false);
   };
 
   return (
     <Layout>
-      <button onClick={()=>{detenerCamara();cancelar();}} style={styles.volver}>← Ficha del empleado</button>
-      <div style={{marginTop:20}}><Cabecera subtitulo={empleado.biometria?"Actualizar biometría neuronal":"Registro biométrico neuronal"}/></div>
-      <section style={{marginTop:30}}>
-        <div style={styles.etiqueta}>{empleado.biometria?"Actualización biométrica":"Empleado seleccionado"}</div>
+      <button
+        onClick={() => {
+          detenerCamara();
+          cancelar();
+        }}
+        style={styles.volver}
+      >
+        ← Ficha del empleado
+      </button>
+
+      <div style={{ marginTop: 20 }}>
+        <Cabecera subtitulo={empleado.biometria ? "Actualizar biometría" : "Registro biométrico"} />
+      </div>
+
+      <section style={{ marginTop: 30 }}>
+        <div style={styles.etiqueta}>
+          {empleado.biometria ? "Actualización biométrica" : "Empleado seleccionado"}
+        </div>
         <h1 style={styles.tituloDashboard}>{empleado.nombre}</h1>
-        <p style={styles.descripcion}>{empleado.codigo} · {empleado.cargo}</p>
+        <p style={styles.descripcion}>
+          {empleado.codigo} · {empleado.cargo}
+        </p>
       </section>
+
       <section style={styles.camaraCard}>
         <div style={styles.videoMarco}>
-          <video ref={videoRef} playsInline muted style={{width:"100%",height:"100%",objectFit:"cover",transform:"scaleX(-1)",display:camaraActiva?"block":"none"}}/>
-          {!camaraActiva&&<div style={styles.camaraVacia}>◎</div>}
-          <div style={styles.guiaRostro}/>
+          <video
+            ref={videoRef}
+            playsInline
+            muted
+            style={{
+              width: "100%",
+              height: "100%",
+              objectFit: "cover",
+              transform: "scaleX(-1)",
+              display: camaraActiva ? "block" : "none",
+            }}
+          />
+          {!camaraActiva && <div style={styles.camaraVacia}>◎</div>}
+          <div style={styles.guiaRostro} />
         </div>
+
         <div style={styles.estadoCamara}>{estadoCamara}</div>
-        {!camaraActiva?<button onClick={iniciarCamara} style={styles.botonPrincipal}>Activar cámara frontal</button>:<button onClick={detenerCamara} style={styles.botonCancelar}>Detener cámara</button>}
-        <button type="button" onClick={capturar} disabled={!camaraActiva||procesando} style={{...styles.botonSecundarioVerde,opacity:!camaraActiva||procesando?.5:1}}>
-          {procesando?"Analizando con IA…":"Capturar rostro neuronal"}
+
+        {!camaraActiva ? (
+          <button onClick={iniciarCamara} style={styles.botonPrincipal}>
+            Activar cámara frontal
+          </button>
+        ) : (
+          <button onClick={detenerCamara} style={styles.botonCancelar}>
+            Detener cámara
+          </button>
+        )}
+
+        <button
+          type="button"
+          onClick={capturar}
+          disabled={!camaraActiva || procesando}
+          style={{
+            ...styles.botonSecundarioVerde,
+            opacity: !camaraActiva || procesando ? 0.5 : 1,
+          }}
+        >
+          {procesando ? "Procesando..." : "Capturar rostro"}
         </button>
       </section>
-      {resultado&&<div style={styles.mensajeInfo}>{resultado}</div>}
-      {muestraLista&&<div style={styles.biometriaNueva}><div><div style={{fontWeight:700,fontSize:13}}>Embedding neuronal listo</div><div style={styles.textoPequeno}>{embedding?.length||0} valores · {empleado.nombre}</div></div><span style={styles.biometriaOk}>Lista</span></div>}
-      <button type="button" onClick={confirmarRegistro} disabled={!muestraLista||procesando} style={{...styles.botonPrincipal,marginTop:16,opacity:!muestraLista||procesando?.5:1}}>Confirmar registro biométrico</button>
-      <div style={styles.avisoDev}>DEV: se guarda únicamente el embedding neuronal generado por Human; no se guarda la fotografía. Los empleados con plantilla visual anterior deben enrolarse nuevamente.</div>
-      <Pie/>
+
+      {resultado && <div style={styles.mensajeInfo}>{resultado}</div>}
+
+      {muestraLista && (
+        <div style={styles.biometriaNueva}>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: 13 }}>Captura lista</div>
+            <div style={styles.textoPequeno}>{empleado.nombre}</div>
+          </div>
+          <span style={styles.biometriaOk}>Lista</span>
+        </div>
+      )}
+
+      <button
+        type="button"
+        onClick={confirmarRegistro}
+        disabled={!muestraLista || procesando}
+        style={{
+          ...styles.botonPrincipal,
+          marginTop: 16,
+          opacity: !muestraLista || procesando ? 0.5 : 1,
+        }}
+      >
+        Confirmar registro biométrico
+      </button>
+
+      <div style={styles.avisoDev}>
+        DEV: en este paso validamos cámara, captura, asociación y persistencia de una
+        plantilla numérica de prueba vinculada al empleado. No se guarda la fotografía.
+        Esta plantilla visual no es un embedding biométrico de producción; el modelo facial,
+        liveness y protección definitiva de plantillas se implementarán antes de usar
+        reconocimiento para asistencia real.
+      </div>
+
+      <canvas ref={canvasRef} style={{ display: "none" }} />
+      <Pie />
     </Layout>
   );
 }
