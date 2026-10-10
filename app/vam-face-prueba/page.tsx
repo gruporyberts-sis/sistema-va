@@ -1547,7 +1547,7 @@ async function similitudHuman(a: number[], b: number[]): Promise<number> {
 
 
 /* =========================================================
-   MODO KIOSCO - v0.1.34 DEV
+   MODO KIOSCO - v0.1.38 DEV
 ========================================================= */
 function PantallaKiosco({
   sesion,
@@ -1620,7 +1620,10 @@ function PantallaKiosco({
       setMensaje("Reconociendo empleado…");
       setDetalle("Comparando plantilla neuronal");
 
-      const emb=await embeddingHumanDesdeVideo(video);
+      const emb=await Promise.race([
+        embeddingHumanDesdeVideo(video),
+        new Promise<never>((_,reject)=>setTimeout(()=>reject(new Error("El análisis facial tardó demasiado. Intente nuevamente.")),20000))
+      ]);
 
       const {data:bio,error:be}=await supabase.from("biometrias_faciales")
         .select("empleado_id,embedding,modelo,empleados!inner(id,codigo_empleado,nombres,apellidos,sucursal_id,estado)")
@@ -1712,11 +1715,11 @@ function PantallaKiosco({
         <div style={{fontSize:12,marginTop:6,opacity:.6}}>Reconocimiento neuronal + validación facial pasiva (modo prueba)</div>
       </div>
       <button disabled={bloqueado||!motorListo} onClick={marcar} style={{width:"min(92vw,520px)",border:0,borderRadius:18,padding:"17px 20px",fontSize:18,fontWeight:900,background:(bloqueado||!motorListo)?"#475569":"#14b8a6",color:"#fff"}}>
-        {!motorListo?"CARGANDO MOTOR…":estado==="PROCESANDO"?"SIGA LA INSTRUCCIÓN…":"MARCAR AHORA"}
+        {!motorListo?"CARGANDO MOTOR…":estado==="PROCESANDO"?"RECONOCIENDO ROSTRO…":"MARCAR AHORA"}
       </button>
       <button onClick={abrirAdministracion} style={{marginTop:14,border:"1px solid rgba(148,163,184,.35)",borderRadius:12,background:"transparent",color:"#94a3b8",fontSize:12,padding:"9px 14px"}}>⚙ Administración</button>
     </main>
-    <div style={{textAlign:"center",padding:12,fontSize:10,opacity:.45}}>v0.1.36 DEV · Human neural + confirmación visual</div>
+    <div style={{textAlign:"center",padding:12,fontSize:10,opacity:.45}}>v0.1.38 DEV · Human neural + recuperación de intentos</div>
   </div>
 }
 
