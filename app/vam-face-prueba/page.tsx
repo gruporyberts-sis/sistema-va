@@ -1380,11 +1380,24 @@ async function obtenerHumanVam(): Promise<any> {
     });
 
     await human.load();
-    await human.warmup();
+    // En Android el warmup puede bloquear la pantalla inicial; la primera detección calienta el motor.
+    if (!/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
+      await human.warmup();
+    }
     return human;
   })();
 
-  return vamHumanPromise;
+  // Evita una pantalla de carga infinita y permite reintentar si falla la red/modelo.
+  const cargaActual = vamHumanPromise;
+  try {
+    return await Promise.race([
+      cargaActual,
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("El motor facial tardó más de 45 segundos. Verifica la conexión del celular, desactiva ahorro de datos y vuelve a intentar.")), 45000)),
+    ]);
+  } catch (error) {
+    if (vamHumanPromise === cargaActual) vamHumanPromise = null;
+    throw error;
+  }
 }
 
 async function embeddingHumanDesdeVideo(video: HTMLVideoElement): Promise<number[]> {
