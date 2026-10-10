@@ -951,11 +951,16 @@ function Dashboard({
     cargarDashboard();
   }, [sesion.empresaId]);
 
-  const horaRD = (valor: string) =>
+  const fechaHoraRD = (valor: string) =>
     new Intl.DateTimeFormat("es-DO", {
+      timeZone: "America/Santo_Domingo",
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
       hour: "2-digit",
       minute: "2-digit",
       second: "2-digit",
+      hour12: true,
     }).format(new Date(valor));
 
   return (
@@ -1041,7 +1046,7 @@ function Dashboard({
                   {m.empleado}
                 </div>
                 <div style={{ fontSize: 12, color: "#64748b", marginTop: 3 }}>
-                  {m.codigo || "Sin código"} · {horaRD(m.fechaHora)}
+                  {m.codigo || "Sin código"} · {fechaHoraRD(m.fechaHora)}
                   {m.confianza !== null
                     ? ` · ${Math.round(m.confianza * 100)}%`
                     : ""}
@@ -1529,7 +1534,7 @@ async function similitudHuman(a: number[], b: number[]): Promise<number> {
 
 
 /* =========================================================
-   MODO KIOSCO - v0.1.33 DEV
+   MODO KIOSCO - v0.1.34 DEV
 ========================================================= */
 function PantallaKiosco({
   sesion,
@@ -1573,7 +1578,7 @@ function PantallaKiosco({
         }
         setEstado("CAMARA");
         setMensaje("Colóquese frente a la cámara");
-        setDetalle("Motor neuronal + prueba de vida listos");
+        setDetalle("Motor neuronal + validación pasiva listos");
       }catch(x:any){
         setEstado("ERROR");
         setMensaje("No fue posible iniciar el reconocimiento facial");
@@ -1590,15 +1595,15 @@ function PantallaKiosco({
     if(bloqueado||estado==="PROCESANDO"||!motorListo)return;
     setBloqueado(true);
     setEstado("PROCESANDO");
-    setMensaje("Iniciando prueba de vida…");
-    setDetalle("Siga la instrucción en pantalla");
+    setMensaje("Preparando reconocimiento facial…");
+    setDetalle("Mire directamente a la cámara, sin mover la cabeza");
     setPorcentaje(null);
 
     try{
       const video=videoRef.current;
       if(!video)throw new Error("La cámara no está disponible.");
 
-      await pruebaVidaActivaHuman(video,(m,d)=>{setMensaje(m);setDetalle(d||"");});
+      // Prueba sin desafío de movimiento: se mantienen antispoof y liveness pasivos en embeddingHumanDesdeVideo().
       setMensaje("Reconociendo empleado…");
       setDetalle("Comparando plantilla neuronal");
 
@@ -1654,8 +1659,8 @@ function PantallaKiosco({
       if(re)throw re;
 
       setEstado("OK");
-      setMensaje(`${tipo} registrada`);
-      setDetalle(`${e.nombres} ${e.apellidos} · Vida activa aprobada`);
+      setMensaje("ACEPTADO");
+      setDetalle(`${e.nombres} ${e.apellidos} · ${tipo} registrada correctamente`);
       setPorcentaje(Math.round(score));
     }catch(x:any){
       setEstado("ERROR");
@@ -1665,7 +1670,7 @@ function PantallaKiosco({
       setTimeout(()=>{
         setEstado("CAMARA");
         setMensaje("Colóquese frente a la cámara");
-        setDetalle(motorListo?"Motor neuronal + prueba de vida listos":"");
+        setDetalle(motorListo?"Motor neuronal + validación pasiva listos":"");
         setPorcentaje(null);
         setBloqueado(false);
       },4000);
@@ -1677,6 +1682,11 @@ function PantallaKiosco({
       <div><div style={{fontSize:20,fontWeight:900}}>VAM FACE</div><div style={{fontSize:11,opacity:.7}}>ATTENDANCE · KIOSCO AUTORIZADO</div></div>
       <div style={{textAlign:"right"}}><div style={{fontSize:24,fontWeight:900}}>{hora.toLocaleTimeString("es-DO",{hour:"2-digit",minute:"2-digit"})}</div><div style={{fontSize:11,opacity:.7}}>{hora.toLocaleDateString("es-DO",{dateStyle:"medium"})}</div></div>
     </header>
+    <style>{`@keyframes vamAceptadoFlash { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: .25; transform: scale(1.07); } }`}</style>
+    {estado==="OK"&&<div role="status" aria-live="assertive" style={{position:"fixed",inset:0,zIndex:9999,background:"rgba(0,60,44,.90)",display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",pointerEvents:"none",textAlign:"center",padding:20}}>
+      <div style={{fontSize:"clamp(44px,10vw,100px)",fontWeight:1000,color:"#ffffff",letterSpacing:3,animation:"vamAceptadoFlash .65s ease-in-out infinite",textShadow:"0 0 35px rgba(110,231,183,.7)"}}>✓ ACEPTADO</div>
+      <div style={{fontSize:"clamp(17px,4vw,26px)",color:"#d1fae5",marginTop:18,fontWeight:700}}>{detalle}</div>
+    </div>}
     <main style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:18}}>
       <div style={{width:"min(92vw,520px)",aspectRatio:"1 / 1",maxHeight:"64vh",overflow:"hidden",borderRadius:28,position:"relative",background:"#000",boxShadow:"0 18px 60px rgba(0,0,0,.35)"}}>
         <video ref={videoRef} playsInline muted style={{width:"100%",height:"100%",objectFit:"cover",transform:"scaleX(-1)"}}/>
@@ -1686,14 +1696,14 @@ function PantallaKiosco({
         <div style={{fontSize:estado==="OK"?27:22,fontWeight:900,color:estado==="OK"?"#6ee7b7":estado==="ERROR"?"#fca5a5":"#fff"}}>{mensaje}</div>
         {detalle&&<div style={{fontSize:15,marginTop:6,opacity:.85}}>{detalle}</div>}
         {porcentaje!==null&&<div style={{fontSize:30,fontWeight:900,marginTop:8,color:porcentaje>=UMBRAL_HUMAN?"#6ee7b7":"#fca5a5"}}>{porcentaje}%</div>}
-        <div style={{fontSize:12,marginTop:6,opacity:.6}}>Reconocimiento neuronal + prueba de vida activa</div>
+        <div style={{fontSize:12,marginTop:6,opacity:.6}}>Reconocimiento neuronal + validación facial pasiva (modo prueba)</div>
       </div>
       <button disabled={bloqueado||!motorListo} onClick={marcar} style={{width:"min(92vw,520px)",border:0,borderRadius:18,padding:"17px 20px",fontSize:18,fontWeight:900,background:(bloqueado||!motorListo)?"#475569":"#14b8a6",color:"#fff"}}>
         {!motorListo?"CARGANDO MOTOR…":estado==="PROCESANDO"?"SIGA LA INSTRUCCIÓN…":"MARCAR AHORA"}
       </button>
       <button onClick={abrirAdministracion} style={{marginTop:14,border:"1px solid rgba(148,163,184,.35)",borderRadius:12,background:"transparent",color:"#94a3b8",fontSize:12,padding:"9px 14px"}}>⚙ Administración</button>
     </main>
-    <div style={{textAlign:"center",padding:12,fontSize:10,opacity:.45}}>v0.1.33 DEV · Human neural + Active Liveness</div>
+    <div style={{textAlign:"center",padding:12,fontSize:10,opacity:.45}}>v0.1.36 DEV · Human neural + confirmación visual</div>
   </div>
 }
 
