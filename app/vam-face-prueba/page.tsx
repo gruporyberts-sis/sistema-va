@@ -1559,6 +1559,11 @@ function PantallaKiosco({
   abrirAdministracion: () => void | Promise<void>;
 }) {
   const videoRef=React.useRef<HTMLVideoElement|null>(null);
+  const intentoRef=React.useRef(0);
+  const enProcesoRef=React.useRef(false);
+  const inferenciaPendienteRef=React.useRef(false);
+  const confirmacionPendienteRef=React.useRef(false);
+  const [requiereReinicio,setRequiereReinicio]=useState(false);
   const [stream,setStream]=useState<MediaStream|null>(null);
   const [estado,setEstado]=useState<"CAMARA"|"PROCESANDO"|"OK"|"ERROR">("CAMARA");
   const [mensaje,setMensaje]=useState("Inicializando cámara y motor facial…");
@@ -1578,9 +1583,8 @@ function PantallaKiosco({
       try{
         await obtenerHumanVam();
         if(!activo)return;
-        setMotorListo(true);
         const s=await navigator.mediaDevices.getUserMedia({
-          video:{facingMode:"user",width:{ideal:720},height:{ideal:720}},
+          video:{facingMode:"user",width:{ideal:480},height:{ideal:480}},
           audio:false
         });
         if(!activo){s.getTracks().forEach(x=>x.stop());return;}
@@ -1589,6 +1593,7 @@ function PantallaKiosco({
           videoRef.current.srcObject=s;
           await videoRef.current.play();
         }
+        setMotorListo(true);
         setEstado("CAMARA");
         setMensaje("Colóquese frente a la cámara");
         setDetalle("Motor neuronal + validación pasiva listos");
@@ -1604,8 +1609,24 @@ function PantallaKiosco({
 
   useEffect(()=>()=>{stream?.getTracks().forEach(x=>x.stop())},[stream]);
 
+  // Watchdog independiente: recupera la interfaz incluso si WebGL o una petición se bloquea.
+  useEffect(()=>{
+    if(estado!=="PROCESANDO")return;
+    const id=setTimeout(()=>{
+      intentoRef.current+=1;
+      setEstado("ERROR");
+      setMensaje("El proceso excedió 30 segundos.");
+      setDetalle("Por seguridad, reinicia el kiosco antes de otra marcación y comprueba el historial.");
+      setRequiereReinicio(true);
+      setBloqueado(true);
+    },30000);
+    return()=>clearTimeout(id);
+  },[estado]);
+
   const marcar=async()=>{
-    if(bloqueado||estado==="PROCESANDO"||!motorListo)return;
+    if(enProcesoRef.current||bloqueado||estado==="PROCESANDO"||!motorListo||requiereReinicio)return;
+    enProcesoRef.current=true;
+    const intento=++intentoRef.current;
     setBloqueado(true);
     setEstado("PROCESANDO");
     setMensaje("Preparando reconocimiento facial…");
@@ -1620,17 +1641,22 @@ function PantallaKiosco({
       setMensaje("Reconociendo empleado…");
       setDetalle("Comparando plantilla neuronal");
 
+      inferenciaPendienteRef.current=true;
+      const tareaInferencia=embeddingHumanDesdeVideo(video);
+      void tareaInferencia.then(()=>{inferenciaPendienteRef.current=false;},()=>{inferenciaPendienteRef.current=false;});
       const emb=await Promise.race([
-        embeddingHumanDesdeVideo(video),
+        tareaInferencia,
         new Promise<never>((_,reject)=>setTimeout(()=>reject(new Error("El análisis facial tardó demasiado. Intente nuevamente.")),20000))
       ]);
 
-      const {data:bio,error:be}=await supabase.from("biometrias_faciales")
+      if(intento!==intentoRef.current)return;
+      const {data:bio,error:be}=await Promise.race([supabase.from("biometrias_faciales")
         .select("empleado_id,embedding,modelo,empleados!inner(id,codigo_empleado,nombres,apellidos,sucursal_id,estado)")
         .eq("empresa_id",sesion.empresaId)
         .eq("estado","ACTIVA")
-        .eq("modelo","VAM_FACE_HUMAN_NEURAL");
+        .eq("modelo","VAM_FACE_HUMAN_NEURAL"),new Promise<never>((_,r)=>setTimeout(()=>r(new Error("Tiempo agotado consultando biometrías")),12000))]);
 
+      if(intento!==intentoRef.current)return;
       if(be)throw be;
       if(!bio?.length)throw new Error("No hay empleados enrolados con el nuevo motor neuronal.");
 
@@ -1657,14 +1683,18 @@ function PantallaKiosco({
       const e:any=Array.isArray(mejor.empleados)?mejor.empleados[0]:mejor.empleados;
       if(!e||e.estado!=="ACTIVO")throw new Error("Empleado no disponible para marcar.");
 
+      if(intento!==intentoRef.current)return;
       const inicio=new Date();inicio.setHours(0,0,0,0);
-      const {data:last,error:le}=await supabase.from("marcaciones").select("tipo,fecha_hora")
+      const {data:last,error:le}=await Promise.race([supabase.from("marcaciones").select("tipo,fecha_hora")
         .eq("empresa_id",sesion.empresaId).eq("empleado_id",mejor.empleado_id)
-        .gte("fecha_hora",inicio.toISOString()).order("fecha_hora",{ascending:false}).limit(1);
+        .gte("fecha_hora",inicio.toISOString()).order("fecha_hora",{ascending:false}).limit(1),new Promise<never>((_,r)=>setTimeout(()=>r(new Error("Tiempo agotado consultando marcaciones")),12000))]);
+      if(intento!==intentoRef.current)return;
       if(le)throw le;
       const tipo=last?.[0]?.tipo==="ENTRADA"?"SALIDA":"ENTRADA";
 
-      const {error:re}=await supabase.rpc("registrar_marcacion_facial_dev",{
+      if(intento!==intentoRef.current)return;
+      confirmacionPendienteRef.current=true;
+      const tareaRpc=supabase.rpc("registrar_marcacion_facial_dev",{
         p_empresa_id:sesion.empresaId,
         p_empleado_id:mejor.empleado_id,
         p_sucursal_id:e.sucursal_id||null,
@@ -1672,23 +1702,33 @@ function PantallaKiosco({
         p_confianza:Number((score/100).toFixed(4)),
         p_dispositivo_id:"44307fba-f876-492e-b68e-bdeb4cb9a6c4"
       });
+      void tareaRpc.then(()=>{confirmacionPendienteRef.current=false;},()=>{confirmacionPendienteRef.current=false;});
+      const {error:re}=await Promise.race([tareaRpc,new Promise<never>((_,r)=>setTimeout(()=>r(new Error("Confirmación incierta: comprueba el historial y reinicia el kiosco antes de otra marcación.")),12000))]);
+      if(intento!==intentoRef.current)return;
       if(re)throw re;
 
+      if(intento!==intentoRef.current)return;
       setEstado("OK");
       setMensaje("ACEPTADO");
       setDetalle(`${e.nombres} ${e.apellidos} · ${tipo} registrada correctamente`);
       setPorcentaje(Math.round(score));
     }catch(x:any){
+      if(intento!==intentoRef.current)return;
       setEstado("ERROR");
       setMensaje(x?.message||"No fue posible registrar la marcación.");
-      setDetalle("Marcación cancelada");
+      if(inferenciaPendienteRef.current||confirmacionPendienteRef.current||String(x?.message||"").includes("Confirmación incierta")){
+        setRequiereReinicio(true);
+        setDetalle("Reinicia el kiosco y revisa el historial antes de reintentar.");
+      }else{setDetalle("No se registró una marcación confirmada.");}
     }finally{
-      setTimeout(()=>{
+      enProcesoRef.current=false;
+      if(intento===intentoRef.current&&!requiereReinicio&&!inferenciaPendienteRef.current&&!confirmacionPendienteRef.current)setTimeout(()=>{
+        if(intento!==intentoRef.current)return;
         setEstado("CAMARA");
         setMensaje("Colóquese frente a la cámara");
         setDetalle(motorListo?"Motor neuronal + validación pasiva listos":"");
         setPorcentaje(null);
-        setBloqueado(false);
+        if(!inferenciaPendienteRef.current&&!confirmacionPendienteRef.current)setBloqueado(false);
       },4000);
     }
   };
@@ -1714,12 +1754,13 @@ function PantallaKiosco({
         {porcentaje!==null&&<div style={{fontSize:30,fontWeight:900,marginTop:8,color:porcentaje>=UMBRAL_HUMAN?"#6ee7b7":"#fca5a5"}}>{porcentaje}%</div>}
         <div style={{fontSize:12,marginTop:6,opacity:.6}}>Reconocimiento neuronal + validación facial pasiva (modo prueba)</div>
       </div>
-      <button disabled={bloqueado||!motorListo} onClick={marcar} style={{width:"min(92vw,520px)",border:0,borderRadius:18,padding:"17px 20px",fontSize:18,fontWeight:900,background:(bloqueado||!motorListo)?"#475569":"#14b8a6",color:"#fff"}}>
+      <button disabled={bloqueado||!motorListo||requiereReinicio} onClick={marcar} style={{width:"min(92vw,520px)",border:0,borderRadius:18,padding:"17px 20px",fontSize:18,fontWeight:900,background:(bloqueado||!motorListo||requiereReinicio)?"#475569":"#14b8a6",color:"#fff"}}>
         {!motorListo?"CARGANDO MOTOR…":estado==="PROCESANDO"?"RECONOCIENDO ROSTRO…":"MARCAR AHORA"}
       </button>
+      {requiereReinicio&&<button onClick={()=>window.location.reload()} style={{marginTop:12,border:0,borderRadius:12,padding:"12px 20px",fontWeight:800,background:"#f59e0b",color:"#111827"}}>REINICIAR KIOSCO</button>}
       <button onClick={abrirAdministracion} style={{marginTop:14,border:"1px solid rgba(148,163,184,.35)",borderRadius:12,background:"transparent",color:"#94a3b8",fontSize:12,padding:"9px 14px"}}>⚙ Administración</button>
     </main>
-    <div style={{textAlign:"center",padding:12,fontSize:10,opacity:.45}}>v0.1.38 DEV · Human neural + recuperación de intentos</div>
+    <div style={{textAlign:"center",padding:12,fontSize:10,opacity:.45}}>v0.1.40 DEV · Bloqueo preventivo de intentos inciertos</div>
   </div>
 }
 
