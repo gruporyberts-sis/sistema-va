@@ -48,6 +48,27 @@ type Empleado = {
   fechaIngreso?: string;
 };
 
+const KIOSCO_ID = "44307fba-f876-492e-b68e-bdeb4cb9a6c4"; // Dispositivo DEMO, sustituir por selector multiempresa antes de producción.
+const KIOSCO_STORAGE = "vam_face_credencial_kiosco_v1";
+type CredencialKiosco = { dispositivo_id: string; token: string; empresa_id: string };
+function leerCredencialKiosco(): CredencialKiosco | null {
+  try {
+    const value = JSON.parse(window.localStorage.getItem(KIOSCO_STORAGE) || "null");
+    return value && typeof value.token === "string" && /^[0-9a-f]{64}$/i.test(value.token) &&
+      typeof value.dispositivo_id === "string" && typeof value.empresa_id === "string" ? value : null;
+  } catch { return null; }
+}
+async function solicitarKiosco(ruta: string, credencial: CredencialKiosco, datos: Record<string, unknown> = {}) {
+  const respuesta = await fetch(`/api/vam-face/kiosco/${ruta}`, {
+    method: "POST", cache: "no-store",
+    headers: { "Content-Type": "application/json", Authorization: `Kiosk ${credencial.token}` },
+    body: JSON.stringify({ dispositivo_id: credencial.dispositivo_id, ...datos }),
+  });
+  const resultado = await respuesta.json().catch(() => ({}));
+  if (!respuesta.ok) throw new Error(resultado.error || `Error del kiosco (${respuesta.status})`);
+  return resultado;
+}
+
 const EMPRESA_DEMO = {
   empresaId: "775e3316-087d-4e18-b76d-d698166c30c1",
   empresaNombre: "VAM FACE DEMO",
@@ -58,6 +79,7 @@ const EMPRESA_DEMO = {
 const MODELO_FACIAL_DEV = "VAM_FACE_VISUAL_DEV";
 const VERSION_FACIAL_DEV = "0.1.30.1";
 const DIMENSION_FACIAL_DEV = 144;
+const UMBRAL_RECONOCIMIENTO_DEV = 82; // Solo para pruebas: no garantiza identidad
 function crearPlantillaVisualDev(video: HTMLVideoElement, canvas: HTMLCanvasElement): number[] | null {
   if (!video.videoWidth || !video.videoHeight) return null;
   const size=96, grid=12, block=size/grid;
@@ -88,6 +110,8 @@ function crearPlantillaVisualDev(video: HTMLVideoElement, canvas: HTMLCanvasElem
 export default function VamFacePrueba() {
   const [vista, setVista] = useState<Vista>("activar-kiosco");
   const [kioscoActivado, setKioscoActivado] = useState(false);
+  const [credencialKiosco, setCredencialKiosco] = useState<CredencialKiosco | null>(null);
+  const [errorActivacion, setErrorActivacion] = useState("");
   const [sesion, setSesion] = useState<SesionEmpresa | null>(null);
   const [activandoInvitacion, setActivandoInvitacion] = useState(false);
   const [passwordInvitacion, setPasswordInvitacion] = useState("");
@@ -100,76 +124,27 @@ export default function VamFacePrueba() {
   const [verificandoSesion, setVerificandoSesion] = useState(true);
   const [empleadoSeleccionado, setEmpleadoSeleccionado] = useState<Empleado | null>(null);
 
+  // La credencial se valida contra Supabase en cada apertura; no basta una bandera local.
   const reconstruirSesion = React.useCallback(async () => {
     try {
-      const activado =
-        typeof window !== "undefined" &&
-        window.localStorage.getItem("vam_face_kiosco_dev_activo") === "1";
-
-      setKioscoActivado(activado);
-
-      if (!activado) {
-        // En una instalación nueva no reutilizamos una sesión administrativa anterior.
-        await supabase.auth.signOut();
-        setSesion(null);
-        setVista("activar-kiosco");
-        return;
+      const credencial = leerCredencialKiosco();
+      if (credencial) {
+        const estado = await solicitarKiosco("estado", credencial);
+        if (estado.ok && estado.empresa_id === credencial.empresa_id) {
+          setCredencialKiosco(credencial);
+          setKioscoActivado(true);
+          setVista("kiosco");
+          return;
+        }
       }
-
-      const { data: { session: authSession }, error: sessionError } =
-        await supabase.auth.getSession();
-
-      if (sessionError || !authSession?.user) {
-        // DEV local: si se perdió la sesión, exige reactivar.
-        window.localStorage.removeItem("vam_face_kiosco_dev_activo");
-        setKioscoActivado(false);
-        setSesion(null);
-        setVista("activar-kiosco");
-        return;
-      }
-
-      const usuarioAuth = authSession.user;
-      const { data: vinculaciones, error: vinculacionError } = await supabase
-        .from("usuarios_empresa")
-        .select("empresa_id,rol,estado")
-        .eq("auth_user_id", usuarioAuth.id)
-        .eq("estado", "ACTIVO")
-        .limit(1);
-
-      const vinculacion = vinculaciones?.[0];
-      if (vinculacionError || !vinculacion || vinculacion.rol !== "ADMIN_EMPRESA") {
-        window.localStorage.removeItem("vam_face_kiosco_dev_activo");
-        await supabase.auth.signOut();
-        setSesion(null);
-        setVista("activar-kiosco");
-        return;
-      }
-
-      const { data: empresas, error: empresaError } = await supabase
-        .from("empresas")
-        .select("id,nombre,estado")
-        .eq("id", vinculacion.empresa_id)
-        .eq("estado", "ACTIVA")
-        .limit(1);
-
-      if (empresaError || !empresas?.[0]) {
-        window.localStorage.removeItem("vam_face_kiosco_dev_activo");
-        await supabase.auth.signOut();
-        setSesion(null);
-        setVista("activar-kiosco");
-        return;
-      }
-
-      setSesion({
-        empresaId: empresas[0].id,
-        empresaNombre: empresas[0].nombre,
-        rol: vinculacion.rol,
-        usuario: usuarioAuth.email || "",
-      });
-      setVista("kiosco");
-    } finally {
-      setVerificandoSesion(false);
-    }
+      setCredencialKiosco(null);
+      setKioscoActivado(false);
+      setVista("activar-kiosco");
+    } catch (error) {
+      // Si el servidor está temporalmente fuera de línea, no borrar la credencial.
+      setErrorActivacion(error instanceof Error ? error.message : "No se pudo validar el kiosco.");
+      setVista("activar-kiosco");
+    } finally { setVerificandoSesion(false); }
   }, []);
 
   React.useEffect(() => {
@@ -292,7 +267,9 @@ export default function VamFacePrueba() {
   const cerrarSesion = async () => {
     await supabase.auth.signOut();
     setSesion(null);
-    setVista("kiosco");
+    setKioscoActivado(false);
+    // La sesión administrativa se cierra sin revocar la activación del kiosco.
+    setVista("activar-kiosco");
   };
 
   if (activandoInvitacion) {
@@ -339,15 +316,24 @@ export default function VamFacePrueba() {
       <PantallaLogin
         volver={() => setVista("activar-kiosco")}
         titulo="Activar Kiosco"
-        descripcion="Inicia sesión con un usuario ADMIN_EMPRESA para autorizar este equipo como punto de marcación."
+        descripcion={errorActivacion || "Inicia sesión con un usuario ADMIN_EMPRESA para autorizar este equipo como punto de marcación."}
         textoBoton="ACTIVAR KIOSCO"
         soloAdministrador
         accesoCorrecto={async (sesionReal) => {
-          if (typeof window !== "undefined") {
-            window.localStorage.setItem("vam_face_kiosco_dev_activo", "1");
-          }
+          const { data: auth } = await supabase.auth.getSession();
+          if (!auth.session?.access_token) throw new Error("No se obtuvo la sesión administrativa.");
+          const respuesta = await fetch("/api/vam-face/kiosco/activar", {
+            method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${auth.session.access_token}` },
+            body: JSON.stringify({ dispositivo_id: KIOSCO_ID }),
+          });
+          const resultado = await respuesta.json().catch(() => ({}));
+          if (!respuesta.ok || !resultado.token) throw new Error(resultado.error || "No fue posible activar el kiosco.");
+          const credencial: CredencialKiosco = { dispositivo_id: KIOSCO_ID, token: resultado.token, empresa_id: sesionReal.empresaId };
+          window.localStorage.setItem(KIOSCO_STORAGE, JSON.stringify(credencial));
+          setCredencialKiosco(credencial);
           setKioscoActivado(true);
-          setSesion(sesionReal);
+          setSesion(null);
+          await supabase.auth.signOut();
           setVista("kiosco");
         }}
       />
@@ -416,9 +402,9 @@ export default function VamFacePrueba() {
   if (vista === "configuracion" && sesion) {
     return <PantallaConfiguracion sesion={sesion} volver={abrirDashboard} />;
   }
-  if (vista === "kiosco" && sesion) {
+  if (vista === "kiosco" && credencialKiosco) {
     return <PantallaKiosco
-      sesion={sesion}
+      credencial={credencialKiosco}
       volver={abrirDashboard}
       abrirAdministracion={async () => {
         await supabase.auth.signOut();
@@ -678,7 +664,7 @@ function PantallaLogin({
         return;
       }
 
-      accesoCorrecto({
+      await accesoCorrecto({
         empresaId: empresa.id,
         empresaNombre: empresa.nombre,
         rol: vinculacion.rol,
@@ -686,7 +672,7 @@ function PantallaLogin({
       });
     } catch (error) {
       console.error("VAM FACE LOGIN ERROR:", error);
-      setMensaje("No fue posible iniciar sesión. Intenta nuevamente.");
+      setMensaje(error instanceof Error ? error.message : "No fue posible iniciar sesión. Intenta nuevamente.");
     } finally {
       setProcesando(false);
     }
@@ -1347,14 +1333,14 @@ function DatoAsistencia({titulo,valor}:{titulo:string;valor:string}) {
 }
 
 /* =========================================================
-   MODO KIOSCO - v0.1.30.1 DEV
+   MODO KIOSCO - v0.1.30.3
 ========================================================= */
 function PantallaKiosco({
-  sesion,
+  credencial,
   volver,
   abrirAdministracion,
 }: {
-  sesion: SesionEmpresa;
+  credencial: CredencialKiosco;
   volver: () => void;
   abrirAdministracion: () => void | Promise<void>;
 }) {
@@ -1409,10 +1395,8 @@ function PantallaKiosco({
     try{
       const emb=await capturarVector();
       if(!emb) throw new Error("No fue posible capturar el rostro.");
-      const {data:bio,error:be}=await supabase.from("biometrias_faciales")
-        .select("empleado_id,embedding,modelo,version_modelo,empleados!inner(id,codigo_empleado,nombres,apellidos,sucursal_id,estado)")
-        .eq("empresa_id",sesion.empresaId).eq("estado","ACTIVA").eq("modelo",MODELO_FACIAL_DEV).eq("version_modelo",VERSION_FACIAL_DEV);
-      if(be)throw be;
+      const respuestaPlantillas = await solicitarKiosco("plantillas", credencial);
+      const bio = respuestaPlantillas.plantillas || [];
       let mejor:any=null,score=-1;
       for(const b of bio||[]){
         const arr=Array.isArray(b.embedding)?b.embedding:(b.embedding?.values||[]);
@@ -1423,26 +1407,18 @@ function PantallaKiosco({
       const porcentajeActual=Math.max(0,Math.min(100,Math.round(score)));
       setPorcentaje(porcentajeActual);
       if(!mejor)throw new Error("No hay plantillas compatibles. Vuelva a capturar los rostros desde Administración.");
-      if(score<88)throw new Error(`Rostro no reconocido. Mejor coincidencia: ${porcentajeActual}%`);
+      if(score<UMBRAL_RECONOCIMIENTO_DEV)throw new Error(`Rostro no reconocido. Mejor coincidencia: ${porcentajeActual}%`);
       const e:any=Array.isArray(mejor.empleados)?mejor.empleados[0]:mejor.empleados;
       if(!e||e.estado!=="ACTIVO")throw new Error("Empleado no disponible para marcar.");
 
-      const inicio=new Date();inicio.setHours(0,0,0,0);
-      const {data:last,error:le}=await supabase.from("marcaciones").select("tipo,fecha_hora")
-        .eq("empresa_id",sesion.empresaId).eq("empleado_id",mejor.empleado_id)
-        .gte("fecha_hora",inicio.toISOString()).order("fecha_hora",{ascending:false}).limit(1);
-      if(le)throw le;
-      const tipo=last?.[0]?.tipo==="ENTRADA"?"SALIDA":"ENTRADA";
-
-      const {data:rpc,error:re}=await supabase.rpc("registrar_marcacion_facial_dev",{
-        p_empresa_id:sesion.empresaId,
-        p_empleado_id:mejor.empleado_id,
-        p_sucursal_id:e.sucursal_id||null,
-        p_tipo:tipo,
-        p_confianza:Number((score/100).toFixed(4)),
-        p_dispositivo_id:"44307fba-f876-492e-b68e-bdeb4cb9a6c4"
+      const last = await solicitarKiosco("ultima-marcacion", credencial, { empleado_id: mejor.empleado_id });
+      const tipo=last.tipo==="ENTRADA"?"SALIDA":"ENTRADA";
+      await solicitarKiosco("marcaciones", credencial, {
+        empleado_id: mejor.empleado_id,
+        tipo,
+        confianza: Number((score/100).toFixed(4)),
+        evento_uuid: crypto.randomUUID(),
       });
-      if(re)throw re;
 
       setEstado("OK");setMensaje(`${tipo} registrada`);
       setDetalle(`${e.nombres} ${e.apellidos}`);
@@ -1455,9 +1431,8 @@ function PantallaKiosco({
   };
 
   return <div style={{minHeight:"100vh",background:"#061826",color:"#fff",display:"flex",flexDirection:"column",fontFamily:"Arial, sans-serif"}}>
-    <div style={{background:"#fbbf24",color:"#172033",textAlign:"center",padding:"10px 12px",fontWeight:900,fontSize:13}}>VERSIÓN EN PRUEBA · VAM FACE v0.1.30.1 · CAPTURAS NUEVAS OBLIGATORIAS</div>
     <header style={{padding:"18px 20px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-      <div><div style={{fontSize:20,fontWeight:900}}>VAM FACE</div><div style={{fontSize:11,opacity:.7}}>ATTENDANCE · KIOSCO AUTORIZADO</div></div>
+      <div><div style={{fontSize:20,fontWeight:900}}>VAM FACE</div><div style={{fontSize:11,opacity:.7}}>ATTENDANCE · KIOSCO PILOTO</div></div>
       <div style={{textAlign:"right"}}><div style={{fontSize:24,fontWeight:900}}>{hora.toLocaleTimeString("es-DO",{hour:"2-digit",minute:"2-digit"})}</div><div style={{fontSize:11,opacity:.7}}>{hora.toLocaleDateString("es-DO",{dateStyle:"medium"})}</div></div>
     </header>
     <main style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:18}}>
@@ -1469,15 +1444,15 @@ function PantallaKiosco({
       <div style={{textAlign:"center",marginTop:18,minHeight:70}}>
         <div style={{fontSize:estado==="OK"?27:22,fontWeight:900,color:estado==="OK"?"#6ee7b7":estado==="ERROR"?"#fca5a5":"#fff"}}>{mensaje}</div>
         {detalle&&<div style={{fontSize:15,marginTop:6,opacity:.85}}>{detalle}</div>}
-        {porcentaje!==null&&<div style={{fontSize:30,fontWeight:900,marginTop:8,color:porcentaje>=88?"#6ee7b7":"#fca5a5"}}>{porcentaje}%</div>}
-        <div style={{fontSize:12,marginTop:6,opacity:.6}}>Umbral DEV: 88% · No apto para producción</div>
+        {porcentaje!==null&&<div style={{fontSize:30,fontWeight:900,marginTop:8,color:porcentaje>=UMBRAL_RECONOCIMIENTO_DEV?"#6ee7b7":"#fca5a5"}}>{porcentaje}%</div>}
+
       </div>
       <button disabled={bloqueado} onClick={marcar} style={{width:"min(92vw,520px)",border:0,borderRadius:18,padding:"17px 20px",fontSize:18,fontWeight:900,background:bloqueado?"#475569":"#14b8a6",color:"#fff"}}>
         {estado==="PROCESANDO"?"VERIFICANDO…":"MARCAR AHORA"}
       </button>
       <button onClick={abrirAdministracion} style={{marginTop:14,border:"1px solid rgba(148,163,184,.35)",borderRadius:12,background:"transparent",color:"#94a3b8",fontSize:12,padding:"9px 14px"}}>⚙ Administración</button>
     </main>
-    <div style={{textAlign:"center",padding:12,fontSize:10,opacity:.45}}>v0.1.30.1 DEV · reconocimiento visual provisional</div>
+    <div style={{textAlign:"center",padding:12,fontSize:10,opacity:.45}}>VAM FACE · v0.1.30.3</div>
   </div>
 }
 
@@ -3782,7 +3757,7 @@ function PantallaReconocimiento1N({
 
       const candidato=resultados[0];
 
-      if(candidato.porcentaje < 92){
+      if(candidato.porcentaje < UMBRAL_RECONOCIMIENTO_DEV){
         setMejor({
           nombre:candidato.nombre,
           codigo:candidato.codigo,
@@ -3881,7 +3856,7 @@ function PantallaReconocimiento1N({
       </section>
       <section style={styles.fichaEmpleado}>
         <DatoEmpleado titulo="Plantillas disponibles" valor={cargando?"Cargando...":String(plantillas.length)} />
-        <DatoEmpleado titulo="Umbral DEV" valor="88%" />
+        <DatoEmpleado titulo="Umbral DEV" valor="82%" />
       </section>
       <section style={styles.camaraCard}>
         <div style={styles.videoMarco}>
@@ -3900,15 +3875,15 @@ function PantallaReconocimiento1N({
       {mejor && <div style={styles.biometriaNueva}>
         <div>
           <div style={{fontWeight:700,fontSize:13}}>
-            {mejor.porcentaje>=92?mejor.nombre:"Sin identificación"}
+            {mejor.porcentaje>=UMBRAL_RECONOCIMIENTO_DEV?mejor.nombre:"Sin identificación"}
           </div>
           <div style={styles.textoPequeno}>
-            {mejor.porcentaje>=92
+            {mejor.porcentaje>=UMBRAL_RECONOCIMIENTO_DEV
               ? `${mejor.codigo}${mejor.tipo ? ` · ${mejor.tipo}${mejor.hora ? ` · ${mejor.hora}` : ""}` : ""}`
               : "Mejor coincidencia DEV"}
           </div>
         </div>
-        <span style={mejor.porcentaje>=92?styles.biometriaOk:styles.biometriaPendiente}>
+        <span style={mejor.porcentaje>=UMBRAL_RECONOCIMIENTO_DEV?styles.biometriaOk:styles.biometriaPendiente}>
           {mejor.tipo || `${mejor.porcentaje}%`}
         </span>
       </div>}
@@ -4144,11 +4119,11 @@ function PantallaVerificarBiometriaEmpleado({
 
       setSimilitud(porcentaje);
 
-      if (porcentaje >= 92) {
+      if (porcentaje >= UMBRAL_RECONOCIMIENTO_DEV) {
         setResultado(`Coincidencia DEV confirmada con ${empleado.nombre}.`);
       } else {
         setResultado(
-          `La captura no supera el umbral DEV de 88% para ${empleado.nombre}.`
+          `La captura no supera el umbral DEV de 82% para ${empleado.nombre}.`
         );
       }
     } catch {
@@ -4251,9 +4226,9 @@ function PantallaVerificarBiometriaEmpleado({
         <div style={styles.biometriaNueva}>
           <div>
             <div style={{ fontWeight: 700, fontSize: 13 }}>Similitud DEV</div>
-            <div style={styles.textoPequeno}>Umbral de prueba: 88%</div>
+            <div style={styles.textoPequeno}>Umbral de prueba: 82%</div>
           </div>
-          <span style={similitud >= 92 ? styles.biometriaOk : styles.biometriaPendiente}>
+          <span style={similitud >= UMBRAL_RECONOCIMIENTO_DEV ? styles.biometriaOk : styles.biometriaPendiente}>
             {similitud}%
           </span>
         </div>
@@ -4782,7 +4757,7 @@ function PantallaPruebaBiometria({
     setSimilitud(porcentaje);
 
     // Umbral únicamente para esta prueba visual DEV.
-    if (porcentaje >= 92) {
+    if (porcentaje >= UMBRAL_RECONOCIMIENTO_DEV) {
       setResultado(`Coincidencia DEV: ${nombreEnrolado.trim()}.`);
     } else {
       setResultado("La muestra actual no supera el umbral DEV de coincidencia.");
@@ -5056,7 +5031,7 @@ function Cabecera({
       </div>
 
       <div style={styles.version}>
-        v0.1.30.1 DEV
+        v0.1.30.3
       </div>
     </header>
   );
@@ -5075,7 +5050,7 @@ function Pie() {
   return (
     <footer style={styles.footer}>
       <span>VAM FACE Attendance</span>
-      <span>v0.1.30.1 DEV</span>
+      <span>v0.1.30.3</span>
     </footer>
   );
 }
