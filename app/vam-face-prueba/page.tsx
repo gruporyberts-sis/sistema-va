@@ -1561,6 +1561,7 @@ function PantallaKiosco({
   const videoRef=React.useRef<HTMLVideoElement|null>(null);
   const intentoRef=React.useRef(0);
   const enProcesoRef=React.useRef(false);
+  const reinicioObligatorioRef=React.useRef(false);
   const inferenciaPendienteRef=React.useRef(false);
   const confirmacionPendienteRef=React.useRef(false);
   const [requiereReinicio,setRequiereReinicio]=useState(false);
@@ -1617,7 +1618,7 @@ function PantallaKiosco({
       setEstado("ERROR");
       setMensaje("El proceso excedió 30 segundos.");
       setDetalle("Por seguridad, reinicia el kiosco antes de otra marcación y comprueba el historial.");
-      setRequiereReinicio(true);
+      reinicioObligatorioRef.current=true;setRequiereReinicio(true);
       setBloqueado(true);
     },30000);
     return()=>clearTimeout(id);
@@ -1717,12 +1718,12 @@ function PantallaKiosco({
       setEstado("ERROR");
       setMensaje(x?.message||"No fue posible registrar la marcación.");
       if(inferenciaPendienteRef.current||confirmacionPendienteRef.current||String(x?.message||"").includes("Confirmación incierta")){
-        setRequiereReinicio(true);
+        reinicioObligatorioRef.current=true;setRequiereReinicio(true);
         setDetalle("Reinicia el kiosco y revisa el historial antes de reintentar.");
       }else{setDetalle("No se registró una marcación confirmada.");}
     }finally{
       enProcesoRef.current=false;
-      if(intento===intentoRef.current&&!requiereReinicio&&!inferenciaPendienteRef.current&&!confirmacionPendienteRef.current)setTimeout(()=>{
+      if(intento===intentoRef.current&&!reinicioObligatorioRef.current&&!inferenciaPendienteRef.current&&!confirmacionPendienteRef.current)setTimeout(()=>{
         if(intento!==intentoRef.current)return;
         setEstado("CAMARA");
         setMensaje("Colóquese frente a la cámara");
@@ -1733,35 +1734,66 @@ function PantallaKiosco({
     }
   };
 
-  return <div style={{minHeight:"100vh",background:"#061826",color:"#fff",display:"flex",flexDirection:"column",fontFamily:"Arial, sans-serif"}}>
-    <header style={{padding:"18px 20px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-      <div><div style={{fontSize:20,fontWeight:900}}>VAM FACE</div><div style={{fontSize:11,opacity:.7}}>ATTENDANCE · KIOSCO AUTORIZADO</div></div>
-      <div style={{textAlign:"right"}}><div style={{fontSize:24,fontWeight:900}}>{hora.toLocaleTimeString("es-DO",{hour:"2-digit",minute:"2-digit"})}</div><div style={{fontSize:11,opacity:.7}}>{hora.toLocaleDateString("es-DO",{dateStyle:"medium"})}</div></div>
+  const enEspera=estado==="CAMARA";
+  const procesando=estado==="PROCESANDO";
+  const correcto=estado==="OK";
+  const error=estado==="ERROR";
+  const listo=motorListo&&!bloqueado&&!requiereReinicio;
+  return <div className="vam-face-kiosk-v2">
+    <style>{`
+      .vam-face-kiosk-v2{min-height:100dvh;background:radial-gradient(circle at 50% -20%,#1b4266 0%,#0a1930 40%,#050e1d 100%);color:#f7fbff;font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;display:flex;flex-direction:column;overflow-x:hidden}
+      .vam-face-kiosk-v2 *{box-sizing:border-box}
+      .vam-face-kiosk-v2 .vam-top{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:22px clamp(18px,4vw,52px);border-bottom:1px solid #ffffff16}
+      .vam-face-kiosk-v2 .vam-logo{display:flex;align-items:center;gap:13px}
+      .vam-face-kiosk-v2 .vam-symbol{display:grid;place-items:center;width:44px;height:44px;border-radius:14px;background:linear-gradient(135deg,#2fe0c3,#1282a8);font-size:23px;font-weight:900;box-shadow:0 8px 28px #15d8c235}
+      .vam-face-kiosk-v2 .vam-brand{font-weight:850;font-size:19px;letter-spacing:.06em}
+      .vam-face-kiosk-v2 .vam-sub{font-size:10px;letter-spacing:.19em;color:#9db5ca;margin-top:3px}
+      .vam-face-kiosk-v2 .vam-time{font-size:clamp(22px,3vw,33px);font-weight:750;font-variant-numeric:tabular-nums;text-align:right}
+      .vam-face-kiosk-v2 .vam-date{color:#9fb6c9;font-size:12px;text-align:right}
+      .vam-face-kiosk-v2 .vam-layout{flex:1;display:grid;grid-template-columns:minmax(0,1fr) minmax(270px,380px);gap:clamp(20px,4vw,60px);align-items:center;width:min(1100px,100%);margin:0 auto;padding:clamp(18px,4vw,42px)}
+      .vam-face-kiosk-v2 .vam-eyebrow{display:inline-flex;align-items:center;gap:9px;border:1px solid #42dec14d;border-radius:999px;padding:8px 12px;color:#82f1d9;background:#20ad9712;font-size:11px;font-weight:750;letter-spacing:.09em}
+      .vam-face-kiosk-v2 .vam-dot{width:8px;height:8px;border-radius:50%;background:#39e7c6;box-shadow:0 0 0 4px #39e7c622}
+      .vam-face-kiosk-v2 h1{font-size:clamp(28px,3.4vw,44px);line-height:1.12;letter-spacing:-.045em;margin:20px 0 12px;font-weight:850}
+      .vam-face-kiosk-v2 .vam-description{color:#a8bed1;font-size:14px;line-height:1.6;max-width:410px}
+      .vam-face-kiosk-v2 .vam-status{background:#ffffff09;border:1px solid #ffffff1d;border-radius:19px;padding:18px;margin:24px 0 18px}
+      .vam-face-kiosk-v2 .vam-status-title{font-size:17px;font-weight:800;color:${error?'#ffacb6':correcto?'#7ef0ce':'#f3fbff'};overflow-wrap:anywhere}
+      .vam-face-kiosk-v2 .vam-status-description{color:#a9bed1;font-size:12px;margin-top:8px;line-height:1.55;overflow-wrap:anywhere}
+      .vam-face-kiosk-v2 .vam-primary{display:flex;justify-content:center;align-items:center;gap:10px;width:100%;min-height:58px;border:0;border-radius:16px;background:linear-gradient(100deg,#2de0bf,#19a9bc);color:#052434;font-size:16px;font-weight:850;cursor:pointer;box-shadow:0 10px 30px #0ddcba2c}
+      .vam-face-kiosk-v2 .vam-primary:disabled{cursor:not-allowed;background:#344c61;color:#b5c4d0;box-shadow:none}
+      .vam-face-kiosk-v2 .vam-restart{margin-top:12px;width:100%;border:0;border-radius:12px;background:#ffbe58;color:#33210b;padding:13px;font-weight:800;cursor:pointer}
+      .vam-face-kiosk-v2 .vam-admin{margin-top:20px;color:#a2bacb;background:transparent;border:1px solid #ffffff2c;border-radius:11px;padding:10px 14px;cursor:pointer}
+      .vam-face-kiosk-v2 .vam-camera-shell{position:relative;width:100%;max-width:540px;aspect-ratio:4/5;margin:auto;border:1px solid #60e5d05c;border-radius:30px;overflow:hidden;background:#06131e;box-shadow:0 22px 80px #0009,0 0 60px #1ed5bd16}
+      .vam-face-kiosk-v2 .vam-video{display:block;width:100%;height:100%;object-fit:cover;transform:scaleX(-1)}
+      .vam-face-kiosk-v2 .vam-camera-top{position:absolute;top:16px;left:16px;right:16px;display:flex;justify-content:space-between;align-items:center;gap:8px}
+      .vam-face-kiosk-v2 .vam-camera-pill{background:#071e2bbf;border:1px solid #ffffff3b;border-radius:999px;padding:8px 11px;backdrop-filter:blur(8px);font-size:11px;font-weight:750}
+      .vam-face-kiosk-v2 .vam-guide{position:absolute;left:17%;right:17%;top:17%;bottom:17%;border:2px solid #69ffe1a8;border-radius:48% 48% 44% 44%;box-shadow:0 0 28px #37e2bc20,inset 0 0 24px #37e2bc0d;pointer-events:none}
+      .vam-face-kiosk-v2 .vam-guide:before,.vam-face-kiosk-v2 .vam-guide:after{content:"";position:absolute;left:16%;right:16%;height:1px;background:linear-gradient(90deg,transparent,#57e8cf,transparent)}
+      .vam-face-kiosk-v2 .vam-guide:before{top:35%}.vam-face-kiosk-v2 .vam-guide:after{bottom:35%}
+      .vam-face-kiosk-v2 .vam-camera-bottom{position:absolute;bottom:17px;left:16px;right:16px;padding:12px;border-radius:14px;text-align:center;background:#061c2ccc;border:1px solid #ffffff30;backdrop-filter:blur(10px);font-size:12px;font-weight:750}
+      .vam-face-kiosk-v2 .vam-ok-screen{position:fixed;inset:0;z-index:9999;background:#034b3fee;display:flex;align-items:center;justify-content:center;flex-direction:column;padding:24px;text-align:center;pointer-events:none}
+      .vam-face-kiosk-v2 .vam-ok-text{font-size:clamp(42px,9vw,95px);font-weight:950;letter-spacing:.02em}
+      .vam-face-kiosk-v2 .vam-footer{padding:14px 22px;text-align:center;color:#8299ad;font-size:11px;border-top:1px solid #ffffff14}
+      @media(max-width:760px){.vam-face-kiosk-v2 .vam-top{padding:13px 18px}.vam-face-kiosk-v2 .vam-layout{grid-template-columns:1fr;gap:18px;padding:16px;align-content:start}.vam-face-kiosk-v2 .vam-copy{order:2}.vam-face-kiosk-v2 .vam-visual{order:1}.vam-face-kiosk-v2 .vam-camera-shell{max-width:410px;aspect-ratio:1/1.08}.vam-face-kiosk-v2 h1{margin:10px 0;font-size:24px}.vam-face-kiosk-v2 .vam-description{font-size:12px}.vam-face-kiosk-v2 .vam-status{margin:12px 0}.vam-face-kiosk-v2 .vam-brand{font-size:15px}.vam-face-kiosk-v2 .vam-sub{font-size:8px}.vam-face-kiosk-v2 .vam-time{font-size:22px}}
+    `}</style>
+    <header className="vam-top">
+      <div className="vam-logo"><div className="vam-symbol">V</div><div><div className="vam-brand">VAM FACE</div><div className="vam-sub">ATTENDANCE · CORPORATIVO</div></div></div>
+      <div><div className="vam-time">{hora.toLocaleTimeString("es-DO",{hour:"2-digit",minute:"2-digit"})}</div><div className="vam-date">{hora.toLocaleDateString("es-DO",{dateStyle:"medium"})}</div></div>
     </header>
-    <style>{`@keyframes vamAceptadoFlash { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: .25; transform: scale(1.07); } }`}</style>
-    {estado==="OK"&&<div role="status" aria-live="assertive" style={{position:"fixed",inset:0,zIndex:9999,background:"rgba(0,60,44,.90)",display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",pointerEvents:"none",textAlign:"center",padding:20}}>
-      <div style={{fontSize:"clamp(44px,10vw,100px)",fontWeight:1000,color:"#ffffff",letterSpacing:3,animation:"vamAceptadoFlash .65s ease-in-out infinite",textShadow:"0 0 35px rgba(110,231,183,.7)"}}>✓ ACEPTADO</div>
-      <div style={{fontSize:"clamp(17px,4vw,26px)",color:"#d1fae5",marginTop:18,fontWeight:700}}>{detalle}</div>
-    </div>}
-    <main style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:18}}>
-      <div style={{width:"min(92vw,520px)",aspectRatio:"1 / 1",maxHeight:"64vh",overflow:"hidden",borderRadius:28,position:"relative",background:"#000",boxShadow:"0 18px 60px rgba(0,0,0,.35)"}}>
-        <video ref={videoRef} playsInline muted style={{width:"100%",height:"100%",objectFit:"cover",transform:"scaleX(-1)"}}/>
-        <div style={styles.guiaRostro} />
-      </div>
-      <div style={{textAlign:"center",marginTop:18,minHeight:100}}>
-        <div style={{fontSize:estado==="OK"?27:22,fontWeight:900,color:estado==="OK"?"#6ee7b7":estado==="ERROR"?"#fca5a5":"#fff"}}>{mensaje}</div>
-        {detalle&&<div style={{fontSize:15,marginTop:6,opacity:.85}}>{detalle}</div>}
-        {porcentaje!==null&&<div style={{fontSize:30,fontWeight:900,marginTop:8,color:porcentaje>=UMBRAL_HUMAN?"#6ee7b7":"#fca5a5"}}>{porcentaje}%</div>}
-        <div style={{fontSize:12,marginTop:6,opacity:.6}}>Reconocimiento neuronal + validación facial pasiva (modo prueba)</div>
-      </div>
-      <button disabled={bloqueado||!motorListo||requiereReinicio} onClick={marcar} style={{width:"min(92vw,520px)",border:0,borderRadius:18,padding:"17px 20px",fontSize:18,fontWeight:900,background:(bloqueado||!motorListo||requiereReinicio)?"#475569":"#14b8a6",color:"#fff"}}>
-        {!motorListo?"CARGANDO MOTOR…":estado==="PROCESANDO"?"RECONOCIENDO ROSTRO…":"MARCAR AHORA"}
-      </button>
-      {requiereReinicio&&<button onClick={()=>window.location.reload()} style={{marginTop:12,border:0,borderRadius:12,padding:"12px 20px",fontWeight:800,background:"#f59e0b",color:"#111827"}}>REINICIAR KIOSCO</button>}
-      <button onClick={abrirAdministracion} style={{marginTop:14,border:"1px solid rgba(148,163,184,.35)",borderRadius:12,background:"transparent",color:"#94a3b8",fontSize:12,padding:"9px 14px"}}>⚙ Administración</button>
+    {correcto&&<div className="vam-ok-screen" role="status" aria-live="assertive"><div className="vam-ok-text">✓ ACEPTADO</div><div style={{fontSize:"clamp(16px,3vw,26px)",marginTop:16,fontWeight:700}}>{detalle}</div></div>}
+    <main className="vam-layout">
+      <section className="vam-copy">
+        <div className="vam-eyebrow"><span className="vam-dot"/> ESTACIÓN DE ASISTENCIA · MODO PRUEBA</div>
+        <h1>Tu asistencia,<br/><span style={{color:"#4ce8cd"}}>en un instante.</span></h1>
+        <div className="vam-description">Mira de frente a la cámara, mantén tu rostro dentro de la guía y pulsa el botón para registrar tu asistencia.</div>
+        <div className="vam-status" role="status" aria-live="polite"><div className="vam-status-title">{procesando?"◌ ":error?"⚠ ":correcto?"✓ ":"◉ "}{mensaje}</div><div className="vam-status-description">{detalle||"Esperando a que la cámara y el motor estén disponibles."}</div>{porcentaje!==null&&<div style={{fontSize:22,fontWeight:850,marginTop:10,color:porcentaje>=UMBRAL_HUMAN?"#5aebcb":"#ffb3b3"}}>Coincidencia: {porcentaje}%</div>}</div>
+        <button className="vam-primary" disabled={!listo} onClick={marcar}>{!motorListo?"INICIALIZANDO CÁMARA…":procesando?"VERIFICANDO IDENTIDAD…":requiereReinicio?"REINICIO NECESARIO":"◎ REGISTRAR ASISTENCIA"}</button>
+        {requiereReinicio&&<button className="vam-restart" onClick={()=>window.location.reload()}>↻ REINICIAR KIOSCO</button>}
+        <button className="vam-admin" onClick={abrirAdministracion}>⚙ Acceso administración</button>
+      </section>
+      <section className="vam-visual" aria-label="Vista previa de reconocimiento facial"><div className="vam-camera-shell"><video className="vam-video" ref={videoRef} playsInline muted autoPlay/><div className="vam-guide"/><div className="vam-camera-top"><span className="vam-camera-pill">● {motorListo?"CÁMARA ACTIVA":"INICIANDO"}</span><span className="vam-camera-pill">◉ VAM FACE</span></div><div className="vam-camera-bottom">{procesando?"Analizando rostro…":enEspera?"Centra tu rostro dentro de la guía":correcto?"Marcación confirmada":"Revisa el mensaje e inténtalo nuevamente"}</div></div></section>
     </main>
-    <div style={{textAlign:"center",padding:12,fontSize:10,opacity:.45}}>v0.1.40 DEV · Bloqueo preventivo de intentos inciertos</div>
-  </div>
+    <footer className="vam-footer">VAM FACE Attendance · v0.2.1 UI PILOTO · Reconocimiento experimental, no validado contra suplantación</footer>
+  </div>;
 }
 
 /* =========================================================
