@@ -79,7 +79,7 @@ const EMPRESA_DEMO = {
 const MODELO_FACIAL_DEV = "VAM_FACE_VISUAL_DEV";
 const VERSION_FACIAL_DEV = "0.1.30.1";
 const DIMENSION_FACIAL_DEV = 144;
-const UMBRAL_RECONOCIMIENTO_DEV = 82; // Solo para pruebas: no garantiza identidad
+const UMBRAL_RECONOCIMIENTO_DEV = 75; // Solo para pruebas: no garantiza identidad
 function crearPlantillaVisualDev(video: HTMLVideoElement, canvas: HTMLCanvasElement): number[] | null {
   if (!video.videoWidth || !video.videoHeight) return null;
   const size=96, grid=12, block=size/grid;
@@ -3856,7 +3856,7 @@ function PantallaReconocimiento1N({
       </section>
       <section style={styles.fichaEmpleado}>
         <DatoEmpleado titulo="Plantillas disponibles" valor={cargando?"Cargando...":String(plantillas.length)} />
-        <DatoEmpleado titulo="Umbral DEV" valor="82%" />
+        <DatoEmpleado titulo="Umbral DEV" valor="75%" />
       </section>
       <section style={styles.camaraCard}>
         <div style={styles.videoMarco}>
@@ -4123,7 +4123,7 @@ function PantallaVerificarBiometriaEmpleado({
         setResultado(`Coincidencia DEV confirmada con ${empleado.nombre}.`);
       } else {
         setResultado(
-          `La captura no supera el umbral DEV de 82% para ${empleado.nombre}.`
+          `La captura no supera el umbral DEV de 75% para ${empleado.nombre}.`
         );
       }
     } catch {
@@ -4226,7 +4226,7 @@ function PantallaVerificarBiometriaEmpleado({
         <div style={styles.biometriaNueva}>
           <div>
             <div style={{ fontWeight: 700, fontSize: 13 }}>Similitud DEV</div>
-            <div style={styles.textoPequeno}>Umbral de prueba: 82%</div>
+            <div style={styles.textoPequeno}>Umbral de prueba: 75%</div>
           </div>
           <span style={similitud >= UMBRAL_RECONOCIMIENTO_DEV ? styles.biometriaOk : styles.biometriaPendiente}>
             {similitud}%
